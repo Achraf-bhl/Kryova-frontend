@@ -12,9 +12,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <div className="flex min-h-screen flex-col">
       <header className="sticky top-0 z-10 border-b border-border bg-surface/80 backdrop-blur-sm">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <a href="/dashboard" className="text-base font-semibold">
-            Kryova
-          </a>
+          <div className="flex items-center gap-5">
+            <a href="/dashboard" className="text-base font-semibold">
+              Kryova
+            </a>
+            <a
+              href="/dashboard/assistant"
+              className="text-sm text-muted transition-colors hover:text-accent"
+            >
+              Assistant
+            </a>
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted">{user.email}</span>
             <SignOutButton />
