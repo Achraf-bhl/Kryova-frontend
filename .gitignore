@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Tauri build output (Rust target dir is large and machine-specific)
+src-tauri/target/
+src-tauri/gen/

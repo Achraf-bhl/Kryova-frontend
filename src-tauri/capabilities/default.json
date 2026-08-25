@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Least-privilege set: enough to open the window and let the frontend talk to the local backend.",
+  "windows": ["main"],
+  "permissions": ["core:default", "shell:allow-open"]
+}
