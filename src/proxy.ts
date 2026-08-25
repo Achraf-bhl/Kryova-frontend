@@ -7,6 +7,11 @@ export function proxy(request: NextRequest) {
   const isAuthRoute = ["/login", "/register"].includes(request.nextUrl.pathname);
 
   if (!hasSession) {
+    // /login and /register are the pages a signed-out visitor is supposed to
+    // reach. Redirecting them to /login too would send /login to itself and
+    // loop until the browser gives up.
+    if (isAuthRoute) return NextResponse.next();
+
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("next", request.nextUrl.pathname);
     return NextResponse.redirect(loginUrl);

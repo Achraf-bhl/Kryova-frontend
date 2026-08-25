@@ -29,7 +29,14 @@ export type AgentEvent =
       arguments?: Record<string, unknown>;
     }
   | { type: "message"; content: string }
-  | { type: "done"; conversation_id: string; truncated: boolean; steps: number }
+  | {
+      type: "done";
+      conversation_id: string;
+      /** The conversation's project scope, set when the agent created one this turn. */
+      project_id: string | null;
+      truncated: boolean;
+      steps: number;
+    }
   | { type: "error"; message: string };
 
 export interface ChatRequest {

@@ -19,7 +19,8 @@
         "minHeight": 640,
         "resizable": true,
         "center": true,
-        "decorations": true
+        "decorations": true,
+        "visible": false
       }
     ],
     "security": {
@@ -28,7 +29,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis", "deb", "appimage", "dmg"],
+    "targets": [
+      "msi",
+      "nsis",
+      "deb",
+      "appimage",
+      "dmg"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,7 +49,9 @@
     "licenseFile": "../LICENSE",
     "windows": {
       "wix": {
-        "language": ["en-US"],
+        "language": [
+          "en-US"
+        ],
         "upgradeCode": "6f6c5c1e-9a2b-5d4e-8f37-2b9c4a1d7e60"
       },
       "nsis": {
@@ -52,7 +61,10 @@
     },
     "linux": {
       "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0"]
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
       }
     }
   }

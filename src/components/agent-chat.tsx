@@ -14,12 +14,45 @@ interface Turn {
   truncated?: boolean;
 }
 
-export function AgentChat({ projectId }: { projectId?: string }) {
+export interface AgentChatProps {
+  projectId?: string;
+  /** Header copy. Defaults suit the general assistant. */
+  title?: string;
+  subtitle?: string;
+  placeholder?: string;
+  /** Prompts offered on an empty transcript. */
+  examples?: string[];
+  /** Start with the mutation gate open. */
+  defaultAllowMutations?: boolean;
+  autoFocus?: boolean;
+  /**
+   * Fired once, with the project the agent created during this conversation.
+   * Lets a chat-first create flow reveal the project without polling.
+   */
+  onProjectCreated?: (projectId: string) => void;
+}
+
+const DEFAULT_EXAMPLES = [
+  "What projects do I have?",
+  "How did the last run go?",
+  "Which material has the highest yield strength?",
+];
+
+export function AgentChat({
+  projectId,
+  title = "Assistant",
+  subtitle = "Ask about your parts, results, or what to change.",
+  placeholder = "Ask about your parts or results…",
+  examples = DEFAULT_EXAMPLES,
+  defaultAllowMutations = false,
+  autoFocus = false,
+  onProjectCreated,
+}: AgentChatProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [allowMutations, setAllowMutations] = useState(false);
+  const [allowMutations, setAllowMutations] = useState(defaultAllowMutations);
 
   // Live state for the turn in flight, kept separate from committed turns so a
   // failure mid-stream cannot corrupt the transcript above it.
@@ -28,6 +61,13 @@ export function AgentChat({ projectId }: { projectId?: string }) {
   const [narration, setNarration] = useState("");
 
   const conversationId = useRef<string | null>(null);
+  const reportedProject = useRef<string | null>(null);
+  // Held in a ref so handleEvent stays stable and the stream callback never
+  // closes over a stale prop.
+  const onProjectCreatedRef = useRef(onProjectCreated);
+  useEffect(() => {
+    onProjectCreatedRef.current = onProjectCreated;
+  }, [onProjectCreated]);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -83,6 +123,12 @@ export function AgentChat({ projectId }: { projectId?: string }) {
         break;
       case "done":
         conversationId.current = event.conversation_id;
+        // Report the scope once. The agent may create a project on any turn,
+        // and the ref guard keeps a multi-turn conversation from re-firing.
+        if (event.project_id && !reportedProject.current) {
+          reportedProject.current = event.project_id;
+          onProjectCreatedRef.current?.(event.project_id);
+        }
         // Attach the steps to the assistant turn that was just pushed, so the
         // work stays visible in the transcript instead of vanishing.
         setLiveSteps((steps) => {
@@ -143,10 +189,8 @@ export function AgentChat({ projectId }: { projectId?: string }) {
     <div className="flex h-full flex-col rounded-lg border border-border bg-surface shadow-card">
       <header className="flex items-center justify-between border-b border-border px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-accent">Assistant</h2>
-          <p className="text-xs text-muted">
-            Ask about your parts, results, or what to change.
-          </p>
+          <h2 className="text-sm font-semibold text-accent">{title}</h2>
+          <p className="text-xs text-muted">{subtitle}</p>
         </div>
         <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
           <input
@@ -164,11 +208,7 @@ export function AgentChat({ projectId }: { projectId?: string }) {
         {turns.length === 0 && !busy && (
           <div className="space-y-2 py-6 text-center">
             <p className="text-sm text-muted">Try one of these:</p>
-            {[
-              "What projects do I have?",
-              "How did the last run go?",
-              "Which material has the highest yield strength?",
-            ].map((example) => (
+            {examples.map((example) => (
               <button
                 key={example}
                 type="button"
@@ -227,8 +267,9 @@ export function AgentChat({ projectId }: { projectId?: string }) {
                 void send();
               }
             }}
-            placeholder="Ask about your parts or results…"
+            placeholder={placeholder}
             disabled={busy}
+            autoFocus={autoFocus}
             className="flex-1 rounded-md border border-border bg-transparent px-3 py-2 text-sm text-accent outline-none placeholder:text-muted focus:border-primary disabled:opacity-60"
           />
           {busy ? (
