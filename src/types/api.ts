@@ -120,3 +120,34 @@ export interface SurfaceField {
   max_von_mises_mpa: number;
   max_displacement_mm: number;
 }
+
+
+/** Whether the AI features can serve a request, and which model would answer. */
+export interface AIStatus {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  detail: string | null;
+}
+
+export interface Finding {
+  title: string;
+  detail: string;
+  severity: "critical" | "warning" | "info";
+}
+
+export interface DesignSuggestion {
+  change: string;
+  rationale: string;
+  tradeoff: string;
+}
+
+/** A structural engineer's read of one completed run. */
+export interface ResultInterpretation {
+  verdict: "safe" | "marginal" | "yields";
+  headline: string;
+  findings: Finding[];
+  suggestions: DesignSuggestion[];
+  confidence: "high" | "medium" | "low";
+  caveat: string;
+}

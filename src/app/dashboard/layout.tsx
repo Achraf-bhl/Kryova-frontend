@@ -22,6 +22,12 @@ export default async function DashboardLayout({ children }: { children: React.Re
             >
               Assistant
             </a>
+            <a
+              href="/dashboard/settings"
+              className="text-sm text-muted transition-colors hover:text-accent"
+            >
+              Settings
+            </a>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted">{user.email}</span>

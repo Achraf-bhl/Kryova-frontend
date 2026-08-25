@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ResultInterpretationPanel } from "@/components/result-interpretation";
 import { WebGLStressViewer } from "@/components/webgl-stress-viewer";
 import { SkeletonGrid } from "@/components/skeleton";
 import { api } from "@/lib/api-client";
@@ -150,6 +151,13 @@ export default function SimulationPage() {
             tone={result.yields ? "danger" : undefined}
           />
         </div>
+      )}
+
+      {simulation.status === "SUCCEEDED" && (
+        <ResultInterpretationPanel
+          projectId={projectId}
+          simulationId={simulationId}
+        />
       )}
 
       {surface && simulation.status === "SUCCEEDED" && (

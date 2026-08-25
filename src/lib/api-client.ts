@@ -1,8 +1,10 @@
 import type {
+  AIStatus,
   GeometryVersionRead,
   Material,
   ProjectCreate,
   ProjectRead,
+  ResultInterpretation,
   SimulationCreate,
   SimulationRead,
   SurfaceField,
@@ -212,6 +214,13 @@ export const api = {
     ),
   surfaceField: (projectId: string, simulationId: string) =>
     request<SurfaceField>(`/projects/${projectId}/simulations/${simulationId}/surface`),
+
+  aiStatus: () => request<AIStatus>("/ai/status"),
+  interpretSimulation: (projectId: string, simulationId: string) =>
+    mutatingRequest<ResultInterpretation>(
+      `/projects/${projectId}/simulations/${simulationId}/interpretation`,
+      { method: "POST" },
+    ),
 
   logout: () => mutatingRequest<void>("/auth/logout", { method: "POST" }),
 };
