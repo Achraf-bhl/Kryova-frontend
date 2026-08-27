@@ -14,6 +14,9 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "Kryova — Structural Simulation",
   description: "Upload CAD, define loads, and solve FEA in the browser.",
+  other: {
+    "kryova-build": process.env.NEXT_PUBLIC_BUILD_SHA ?? "unknown",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
