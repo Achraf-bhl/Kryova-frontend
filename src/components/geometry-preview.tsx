@@ -13,6 +13,7 @@ export function GeometryPreview({ positions, triangles }: GeometryPreviewProps) 
   const draggingRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
   const lastMouseRef = useRef({ x: 0, y: 0 });
+  const invalidateRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -20,7 +21,13 @@ export function GeometryPreview({ positions, triangles }: GeometryPreviewProps) 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    let animationId: number;
+    let animationId = 0;
+    let needsRender = false;
+
+    function invalidate() {
+      needsRender = true;
+    }
+    invalidateRef.current = invalidate;
 
     function render() {
       if (!canvas || !ctx) return;
@@ -57,7 +64,6 @@ export function GeometryPreview({ positions, triangles }: GeometryPreviewProps) 
       }
 
       for (const [a, b, c] of triangles) {
-        ctx.fillStyle = "rgba(100, 150, 220, 0.6)";
         ctx.beginPath();
         ctx.moveTo(projected[a][0], projected[a][1]);
         ctx.lineTo(projected[b][0], projected[b][1]);
@@ -65,11 +71,17 @@ export function GeometryPreview({ positions, triangles }: GeometryPreviewProps) 
         ctx.closePath();
         ctx.fill();
       }
-
-      animationId = requestAnimationFrame(render);
     }
 
-    render();
+    function loop() {
+      if (needsRender) {
+        render();
+        needsRender = false;
+      }
+      animationId = requestAnimationFrame(loop);
+    }
+
+    loop();
     return () => cancelAnimationFrame(animationId);
   }, [positions, triangles]);
 
@@ -77,6 +89,7 @@ export function GeometryPreview({ positions, triangles }: GeometryPreviewProps) 
     draggingRef.current = true;
     setIsDragging(true);
     lastMouseRef.current = { x: event.clientX, y: event.clientY };
+    invalidateRef.current();
   }
 
   function handleMouseMove(event: React.MouseEvent) {
@@ -84,6 +97,7 @@ export function GeometryPreview({ positions, triangles }: GeometryPreviewProps) 
     rotationRef.current.y += (event.clientX - lastMouseRef.current.x) * 0.01;
     rotationRef.current.x += (event.clientY - lastMouseRef.current.y) * 0.01;
     lastMouseRef.current = { x: event.clientX, y: event.clientY };
+    invalidateRef.current();
   }
 
   function handleMouseUp() {
@@ -94,7 +108,7 @@ export function GeometryPreview({ positions, triangles }: GeometryPreviewProps) 
   return (
     <canvas
       ref={canvasRef}
-      className={`w-full rounded-lg border border-border bg-slate-50 ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
+      className={`w-full rounded-lg border border-border bg-canvas ${isDragging ? "cursor-grabbing" : "cursor-grab"}`}
       style={{ aspectRatio: "16 / 10" }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}

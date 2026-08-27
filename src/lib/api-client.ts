@@ -18,6 +18,19 @@ export type ProjectPage = {
   page_size: number;
   items: ProjectRead[];
 };
+
+export interface PageParams {
+  page?: number;
+  pageSize?: number;
+}
+
+function toQuery(params?: PageParams): string {
+  const search = new URLSearchParams();
+  if (params?.page != null) search.set("page", String(params.page));
+  if (params?.pageSize != null) search.set("page_size", String(params.pageSize));
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
 export type GeometryPage = {
   total: number;
   page: number;
@@ -61,7 +74,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const refreshed = await fetch(`${BASE_URL}/auth/refresh`, {
       method: "POST",
       credentials: "include",
-      headers: { "x-requested-with": "kryova" },
+      headers: (() => {
+        const h: Record<string, string> = { "x-requested-with": "kryova" };
+        const csrf = getCsrfToken();
+        if (csrf) h["x-csrf-token"] = decodeURIComponent(csrf);
+        return h;
+      })(),
     });
     if (refreshed.ok) {
       response = await fetch(`${BASE_URL}${path}`, {
@@ -86,6 +104,25 @@ async function mutatingRequest<T>(path: string, init?: RequestInit): Promise<T> 
   return request<T>(path, { ...init, headers });
 }
 
+async function uploadRequest<T>(path: string, body: FormData | Blob, contentType?: string): Promise<T> {
+  const headers = new Headers();
+  if (contentType) headers.set("Content-Type", contentType);
+  const csrfToken = getCsrfToken();
+  if (csrfToken) headers.set("x-csrf-token", decodeURIComponent(csrfToken));
+
+  const response = await fetch(`${BASE_URL}${path}`, {
+    method: "POST",
+    headers,
+    body,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const errorBody = (await response.json().catch(() => ({}))) as { detail?: string };
+    throw new ApiError(response.status, errorBody.detail ?? `Upload failed with ${response.status}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 export const api = {
   beginUpload: (filename: string, totalSize: number, chunkSize?: number) =>
     mutatingRequest<{ id: string; chunk_size: number; total_chunks: number }>("/media/uploads", {
@@ -99,20 +136,8 @@ export const api = {
       }),
     }),
 
-  uploadChunk: async (uploadId: string, index: number, data: Blob) => {
-    const csrfToken = getCsrfToken();
-    const headers = new Headers({ "Content-Type": "application/octet-stream" });
-    if (csrfToken) headers.set("x-csrf-token", decodeURIComponent(csrfToken));
-    const response = await fetch(`${BASE_URL}/media/uploads/${uploadId}/chunks/${index}`, {
-      method: "PUT",
-      headers,
-      body: data,
-      credentials: "include",
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { detail?: string };
-      throw new ApiError(response.status, body.detail ?? `Chunk upload failed with ${response.status}`);
-    }
+  uploadChunk: async (uploadId: string, index: number, data: Blob): Promise<void> => {
+    await uploadRequest<void>(`/media/uploads/${uploadId}/chunks/${index}`, data, "application/octet-stream");
   },
 
   completeUpload: (uploadId: string) =>
@@ -125,20 +150,7 @@ export const api = {
     const form = new FormData();
     form.append("media_id", mediaId);
     if (note) form.append("note", note);
-    const headers = new Headers();
-    const csrfToken = getCsrfToken();
-    if (csrfToken) headers.set("x-csrf-token", decodeURIComponent(csrfToken));
-    const response = await fetch(`${BASE_URL}/projects/${projectId}/geometry/attach`, {
-      method: "POST",
-      headers,
-      body: form,
-      credentials: "include",
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { detail?: string };
-      throw new ApiError(response.status, body.detail ?? "Failed to attach geometry");
-    }
-    return response.json() as Promise<GeometryVersionRead>;
+    return uploadRequest<GeometryVersionRead>(`/projects/${projectId}/geometry/attach`, form);
   },
 
   register: (email: string, password: string, fullName: string) =>
@@ -171,26 +183,13 @@ export const api = {
   deleteProject: (projectId: string) =>
     mutatingRequest<void>(`/projects/${projectId}`, { method: "DELETE" }),
 
-  listGeometry: (projectId: string) =>
-    request<GeometryPage>(`/projects/${projectId}/geometry?page=1&page_size=100`),
+  listGeometry: (projectId: string, params?: PageParams) =>
+    request<GeometryPage>(`/projects/${projectId}/geometry${toQuery(params)}`),
   uploadGeometry: async (projectId: string, file: File, note?: string) => {
     const form = new FormData();
     form.append("file", file);
     if (note) form.append("note", note);
-    const headers = new Headers();
-    const csrfToken = getCsrfToken();
-    if (csrfToken) headers.set("x-csrf-token", decodeURIComponent(csrfToken));
-    const response = await fetch(`${BASE_URL}/projects/${projectId}/geometry`, {
-      method: "POST",
-      headers,
-      body: form,
-      credentials: "include",
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { detail?: string };
-      throw new ApiError(response.status, body.detail ?? "Upload failed");
-    }
-    return response.json() as Promise<GeometryVersionRead>;
+    return uploadRequest<GeometryVersionRead>(`/projects/${projectId}/geometry`, form);
   },
 
   listMaterials: () => request<{ materials: Material[] }>("/materials"),
@@ -201,9 +200,9 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     }),
-  listSimulations: (projectId: string) =>
+  listSimulations: (projectId: string, params?: PageParams) =>
     request<SimulationPage>(
-      `/projects/${projectId}/simulations?page=1&page_size=100`,
+      `/projects/${projectId}/simulations${toQuery(params)}`,
     ),
   readSimulation: (projectId: string, simulationId: string) =>
     request<SimulationRead>(`/projects/${projectId}/simulations/${simulationId}`),
@@ -214,6 +213,10 @@ export const api = {
     ),
   surfaceField: (projectId: string, simulationId: string) =>
     request<SurfaceField>(`/projects/${projectId}/simulations/${simulationId}/surface`),
+  surfaceFieldBinary: async (projectId: string, simulationId: string): Promise<SurfaceField> => {
+    const buffer = await requestBuffer(`/projects/${projectId}/simulations/${simulationId}/surface/binary`);
+    return parseBinarySurfaceField(buffer);
+  },
 
   aiStatus: () => request<AIStatus>("/ai/status"),
   interpretSimulation: (projectId: string, simulationId: string) =>
@@ -224,5 +227,87 @@ export const api = {
 
   logout: () => mutatingRequest<void>("/auth/logout", { method: "POST" }),
 };
+
+async function requestBuffer(path: string, init?: RequestInit): Promise<ArrayBuffer> {
+  const headers = new Headers(init?.headers);
+  headers.set("x-requested-with", "kryova");
+  const response = await fetch(`${BASE_URL}${path}`, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { detail?: string };
+    throw new ApiError(response.status, body.detail ?? `Request failed with ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+
+export function parseBinarySurfaceField(buffer: ArrayBuffer): SurfaceField {
+  const dataView = new DataView(buffer);
+  const magic = String.fromCharCode(
+    dataView.getUint8(0),
+    dataView.getUint8(1),
+    dataView.getUint8(2),
+    dataView.getUint8(3)
+  );
+  if (magic !== "KRYO") {
+    throw new Error("Invalid binary surface field format");
+  }
+
+  const numNodes = dataView.getUint32(8, true);
+  const numTriangles = dataView.getUint32(12, true);
+  const maxVonMisesMpa = dataView.getFloat32(16, true);
+  const maxDisplacementMm = dataView.getFloat32(20, true);
+
+  const headerSize = 32;
+  const nodesByteLength = numNodes * 3 * 4;
+  const triByteLength = numTriangles * 3 * 4;
+  const dispByteLength = numNodes * 3 * 4;
+
+  let offset = headerSize;
+
+  const rawNodes = new Float32Array(buffer, offset, numNodes * 3);
+  offset += nodesByteLength;
+
+  const rawTriangles = new Uint32Array(buffer, offset, numTriangles * 3);
+  offset += triByteLength;
+
+  const rawDisplacements = new Float32Array(buffer, offset, numNodes * 3);
+  offset += dispByteLength;
+
+  const rawVonMises = new Float32Array(buffer, offset, numNodes);
+
+  const node_positions: [number, number, number][] = new Array(numNodes);
+  for (let i = 0; i < numNodes; i++) {
+    node_positions[i] = [rawNodes[i * 3], rawNodes[i * 3 + 1], rawNodes[i * 3 + 2]];
+  }
+
+  const triangles: [number, number, number][] = new Array(numTriangles);
+  for (let i = 0; i < numTriangles; i++) {
+    triangles[i] = [rawTriangles[i * 3], rawTriangles[i * 3 + 1], rawTriangles[i * 3 + 2]];
+  }
+
+  const displacements: [number, number, number][] = new Array(numNodes);
+  for (let i = 0; i < numNodes; i++) {
+    displacements[i] = [
+      rawDisplacements[i * 3],
+      rawDisplacements[i * 3 + 1],
+      rawDisplacements[i * 3 + 2],
+    ];
+  }
+
+  const von_mises_mpa = Array.from(rawVonMises);
+
+  return {
+    node_positions,
+    triangles,
+    displacements,
+    von_mises_mpa,
+    max_von_mises_mpa: maxVonMisesMpa,
+    max_displacement_mm: maxDisplacementMm,
+  };
+}
+
 
 export { ApiError };

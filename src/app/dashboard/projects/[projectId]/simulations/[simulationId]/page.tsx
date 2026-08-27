@@ -78,12 +78,22 @@ export default function SimulationPage() {
   }, [projectId, simulationId]);
 
   useEffect(() => {
+    let cancelled = false;
     if (simulation?.status !== "SUCCEEDED") return;
     api
-      .surfaceField(projectId, simulationId)
-      .then(setSurface)
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load results"));
+      .surfaceFieldBinary(projectId, simulationId)
+      .catch(() => api.surfaceField(projectId, simulationId))
+      .then((data) => {
+        if (!cancelled) setSurface(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : "Failed to load results");
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectId, simulationId, simulation?.status]);
+
 
   if (error) {
     return <p className="text-sm text-danger">{error}</p>;

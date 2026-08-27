@@ -19,6 +19,25 @@ const AXES = ["x", "y", "z"] as const;
 const SIDES = ["min", "max"] as const;
 const DOFS = ["x", "y", "z"] as const;
 type SelectorType = "face" | "box";
+type Axis = "x" | "y" | "z";
+type Side = "min" | "max";
+
+interface BoxCoords {
+  x: string;
+  y: string;
+  z: string;
+}
+
+function buildFaceSelector(axis: Axis, side: Side): Selector {
+  return { type: "face", axis, side };
+}
+
+function buildBoxSelector(min: BoxCoords, max: BoxCoords): Selector | null {
+  const minV = [Number(min.x), Number(min.y), Number(min.z)];
+  const maxV = [Number(max.x), Number(max.y), Number(max.z)];
+  if (minV.some(Number.isNaN) || maxV.some(Number.isNaN)) return null;
+  return { type: "box", min: minV as [number, number, number], max: maxV as [number, number, number] };
+}
 
 export default function SimulatePage() {
   const params = useParams<{ projectId: string }>();
@@ -64,18 +83,6 @@ export default function SimulatePage() {
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load form data"));
   }, [projectId]);
 
-  function buildFaceSelector(axis: string, side: string): Selector {
-    return { type: "face", axis: axis as "x" | "y" | "z", side: side as "min" | "max" };
-  }
-
-  function buildBoxSelector(min: {x:string;y:string;z:string}, max: {x:string;y:string;z:string}): Selector {
-    return {
-      type: "box",
-      min: [Number(min.x)||0, Number(min.y)||0, Number(min.z)||0],
-      max: [Number(max.x)||0, Number(max.y)||0, Number(max.z)||0],
-    };
-  }
-
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
@@ -86,23 +93,32 @@ export default function SimulatePage() {
     const fixtureWhere = fixtureType === "face"
       ? buildFaceSelector(fixtureAxis, fixtureSide)
       : buildBoxSelector(fixtureBoxMin, fixtureBoxMax);
+    if (!fixtureWhere) {
+      setError("Fixture box coordinates must all be valid numbers.");
+      return;
+    }
     const fixture: Fixture = {
       where: fixtureWhere,
       dofs: Array.from(fixtureDofs),
     };
 
+    let loadWhere: Selector;
+    if (loadType === "face") {
+      loadWhere = buildFaceSelector(loadAxis, loadSide);
+    } else {
+      const selector = buildBoxSelector(loadBoxMin, loadBoxMax);
+      if (!selector) {
+        setError("Load box coordinates must all be valid numbers.");
+        return;
+      }
+      loadWhere = selector;
+    }
+
     const loadCase: LoadCasePayload = {
       name: loadName.trim(),
       material,
       fixtures: [fixture],
-      loads: [
-        {
-          where: loadType === "face"
-            ? buildFaceSelector(loadAxis, loadSide)
-            : buildBoxSelector(loadBoxMin, loadBoxMax),
-          force_n: [Number(forceX) || 0, Number(forceY) || 0, Number(forceZ) || 0],
-        },
-      ],
+      loads: [{ where: loadWhere, force_n: [Number(forceX) || 0, Number(forceY) || 0, Number(forceZ) || 0] }],
     };
 
     setSubmitting(true);

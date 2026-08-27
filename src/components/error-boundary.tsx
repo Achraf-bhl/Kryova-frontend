@@ -7,11 +7,28 @@ interface State {
   error: Error | null;
 }
 
-export class ErrorBoundary extends Component<{ children: React.ReactNode }, State> {
+interface ErrorBoundaryProps {
+  children: React.ReactNode;
+  /** Changing this value resets the boundary (useful for route changes). */
+  resetKey?: string | number;
+}
+
+export class ErrorBoundary extends Component<ErrorBoundaryProps, State> {
   state: State = { hasError: false, error: null };
 
   static getDerivedStateFromError(error: Error): Partial<State> {
     return { hasError: true, error };
+  }
+
+  componentDidUpdate(prevProps: ErrorBoundaryProps) {
+    if (
+      this.state.hasError &&
+      prevProps.resetKey !== undefined &&
+      this.props.resetKey !== undefined &&
+      prevProps.resetKey !== this.props.resetKey
+    ) {
+      this.setState({ hasError: false, error: null });
+    }
   }
 
   render() {
