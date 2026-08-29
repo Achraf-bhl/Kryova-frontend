@@ -139,6 +139,44 @@ fn start_frontend() -> Option<Child> {
     spawn(command)
 }
 
+/// The CATIA bridge daemon, from the backend checkout.
+///
+/// Without this the assistant has no CATIA vocabulary at all: the design tools
+/// (`catia_sketch_rectangle`, `catia_pad`, `catia_hole` …) are dispatched to a
+/// paired daemon over a WebSocket, and `catia_available` is false until one is
+/// connected. On a single-machine install there was nothing to start it, so the
+/// agent was permanently told CATIA was unavailable and fell back to asking the
+/// user to upload a STEP file — the opposite of the product.
+///
+/// `--wait-for-catia` matters here. Kryova is normally up before CATIA is, and
+/// without it the daemon would exit within seconds of login and never come
+/// back. Waiting means the bridge attaches by itself whenever CATIA appears,
+/// whether the engineer opened it or the assistant did.
+///
+/// Exits immediately and harmlessly if the workstation has never been paired.
+fn start_bridge() -> Option<Child> {
+    let dir = backend_dir()?;
+    let scripts = dir.join("scripts");
+    if !scripts.join("catia_bridge").is_dir() {
+        return None;
+    }
+    let venv_python = dir.join("venv").join("Scripts").join("python.exe");
+    let python = if venv_python.is_file() {
+        venv_python
+    } else {
+        PathBuf::from("python")
+    };
+
+    let mut command = Command::new(python);
+    command
+        .current_dir(&scripts)
+        .arg("-m")
+        .arg("catia_bridge")
+        .arg("run")
+        .arg("--wait-for-catia");
+    spawn(command)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -157,6 +195,12 @@ pub fn run() {
                     if let Some(child) = start_frontend() {
                         children.push(child);
                     }
+                }
+                // No port to probe for this one: the bridge dials out and
+                // listens on nothing. It is started unconditionally and, like
+                // the servers above, killed on exit.
+                if let Some(child) = start_bridge() {
+                    children.push(child);
                 }
             }
 
