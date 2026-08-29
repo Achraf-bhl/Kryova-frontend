@@ -35,6 +35,9 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Kryova — AI-native CAD and simulation",
   description: "Describe a part, build it in CATIA, run the analysis, read the stress.",
+  other: {
+    "kryova-build": process.env.NEXT_PUBLIC_BUILD_SHA ?? "unknown",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
