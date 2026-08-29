@@ -130,11 +130,31 @@ export function __resetRefreshState(): void {
  * `ReadableStream` body would be consumed by the first attempt, so don't
  * introduce one without buffering it first.
  */
-async function fetchWithRefresh(path: string, init: RequestInit): Promise<Response> {
+export async function fetchWithRefresh(path: string, init: RequestInit): Promise<Response> {
   const response = await fetch(`${BASE_URL}${path}`, init);
   if (response.status !== 401 || path === REFRESH_PATH) return response;
   if (!(await refreshSession())) return response;
-  return fetch(`${BASE_URL}${path}`, init);
+  return fetch(`${BASE_URL}${path}`, withFreshCsrf(init));
+}
+
+/**
+ * Replace a stale CSRF header with the one the refresh just issued.
+ *
+ * `/auth/refresh` rotates `kryova_csrf` along with the session, so replaying a
+ * mutation *verbatim* sends the token from before the refresh against the
+ * cookie from after it. The backend compares the two and answers 403 "CSRF
+ * failure" — turning a recoverable expiry into a hard error, which is the exact
+ * thing the retry exists to prevent.
+ *
+ * Only touched when the caller set the header: a GET has none, and adding one
+ * would be inventing a credential it never sent.
+ */
+function withFreshCsrf(init: RequestInit): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has("x-csrf-token")) return init;
+  const token = getCsrfToken();
+  if (token) headers.set("x-csrf-token", decodeURIComponent(token));
+  return { ...init, headers };
 }
 
 async function failFromResponse(response: Response, fallback: string): Promise<never> {

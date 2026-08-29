@@ -5,7 +5,7 @@
  * `fetch` body with a streaming reader instead. Same wire format either way.
  */
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+import { fetchWithRefresh } from "@/lib/api-client";
 
 export type AgentEvent =
   | { type: "start"; conversation_id: string }
@@ -64,7 +64,15 @@ export async function streamAgent(
   const token = csrfToken();
   if (token) headers.set("x-csrf-token", decodeURIComponent(token));
 
-  const response = await fetch(`${BASE_URL}/ai/chat/stream`, {
+  // `fetchWithRefresh`, not a bare `fetch`. The access token lives 15 minutes
+  // and every other transport in the app quietly renews it on a 401; this one
+  // did not, so the first message sent more than 15 minutes into a session
+  // failed with "Could not validate credentials" and the user was told to try
+  // again — which failed identically, because nothing had renewed anything.
+  //
+  // Replaying the request is safe here: the body is a string, so it survives
+  // being sent twice. A streaming body would not.
+  const response = await fetchWithRefresh("/ai/chat/stream", {
     method: "POST",
     headers,
     credentials: "include",

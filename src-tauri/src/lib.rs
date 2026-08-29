@@ -62,10 +62,26 @@ fn port_is_open(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
 }
 
-fn wait_for_port(port: u16, timeout: Duration) -> bool {
+/// Wait until every port is accepting connections, or the deadline passes.
+///
+/// One shared deadline, not one each: these start in parallel, so waiting for
+/// them in sequence would let a slow backend eat the frontend's whole budget.
+///
+/// Both ports have to be waited on, and that is the point of this function.
+/// Showing the window as soon as *Next* was listening is what put a
+/// "Something went wrong" card in front of the user on a cold start: Next is
+/// ready in about 200 ms, uvicorn needs several seconds to import numpy, scipy
+/// and gmsh and to run its database lifespan, and every dashboard page is a
+/// server component that calls the API while it renders. Rendering one in that
+/// gap throws, and React reports it as the deliberately opaque minified error
+/// #441 -- which says nothing about the backend still starting.
+///
+/// A listening socket is a sound readiness signal here: uvicorn binds only
+/// after its lifespan has completed, so nothing answers the port early.
+fn wait_for_ports(ports: &[u16], timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if port_is_open(port) {
+        if ports.iter().all(|port| port_is_open(*port)) {
             return true;
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -75,14 +91,46 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
 
 /// Spawn detached from any console, so a packaged launch never flashes a
 /// terminal window behind the app.
-fn spawn(mut command: Command) -> Option<Child> {
+fn spawn(mut command: Command, log_name: &str) -> Option<Child> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
+    if let Some((out, err)) = log_targets(log_name) {
+        command.stdout(out).stderr(err);
+    }
     command.spawn().ok()
+}
+
+/// Where a child's output goes, or None if the log file cannot be opened.
+///
+/// Without this the children are spawned with `CREATE_NO_WINDOW` and no
+/// redirect, which sends every line they write to the void. That is fine right
+/// up until something breaks: the backend logs its tracebacks to stdout, and
+/// when a user asks "what went wrong", the honest answer was that nothing had
+/// been kept. Each process gets its own file, truncated per launch so the
+/// newest run is the whole file rather than the tail of a year of them.
+fn log_dir() -> Option<PathBuf> {
+    let base = std::env::var("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .ok()
+        .or_else(|| dirs_home().map(|home| home.join("AppData").join("Local")))?;
+    let dir = base.join("Kryova").join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    std::env::var("USERPROFILE").map(PathBuf::from).ok()
+}
+
+fn log_targets(name: &str) -> Option<(std::fs::File, std::fs::File)> {
+    let path = log_dir()?.join(format!("{name}.log"));
+    let file = std::fs::File::create(path).ok()?;
+    let clone = file.try_clone().ok()?;
+    Some((file, clone))
 }
 
 /// uvicorn from the project venv; the interpreter is invoked directly rather
@@ -107,7 +155,7 @@ fn start_backend() -> Option<Child> {
         .arg("127.0.0.1")
         .arg("--port")
         .arg(&port);
-    spawn(command)
+    spawn(command, "backend")
 }
 
 /// `next start` against the production build. Invoking next's entry script with
@@ -136,7 +184,7 @@ fn start_frontend() -> Option<Child> {
         .arg("start")
         .arg("-p")
         .arg(&port);
-    spawn(command)
+    spawn(command, "frontend")
 }
 
 /// The CATIA bridge daemon, from the backend checkout.
@@ -174,7 +222,7 @@ fn start_bridge() -> Option<Child> {
         .arg("catia_bridge")
         .arg("run")
         .arg("--wait-for-catia");
-    spawn(command)
+    spawn(command, "catia-bridge")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -208,7 +256,7 @@ pub fn run() {
             // event loop keeps running, then reveal it once Next is serving.
             let handle = app.handle().clone();
             std::thread::spawn(move || {
-                let ready = wait_for_port(FRONTEND_PORT, STARTUP_TIMEOUT);
+                let ready = wait_for_ports(&[BACKEND_PORT, FRONTEND_PORT], STARTUP_TIMEOUT);
                 if let Some(window) = handle.get_webview_window("main") {
                     // The webview was created before the server was listening,
                     // so its first load failed; point it at the live server.
