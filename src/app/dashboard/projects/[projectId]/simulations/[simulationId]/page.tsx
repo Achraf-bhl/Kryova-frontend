@@ -18,9 +18,7 @@ import {
   type PollScheduleState,
 } from "@/lib/poll-schedule";
 import type { SurfaceFieldArrays } from "@/lib/surface-field";
-import type { SimulationRead } from "@/types/api";
-
-const TERMINAL_STATUSES = new Set(["SUCCEEDED", "FAILED"]);
+import { isTerminalStatus, jobStatusLabel, type SimulationRead } from "@/types/api";
 
 /** The padded container the dashboard layout no longer imposes — see PageShell. */
 export default function SimulationPage() {
@@ -59,7 +57,7 @@ function SimulationDetail() {
         setSimulation(data);
         const step = nextAfterSuccess(
           state,
-          TERMINAL_STATUSES.has(data.status),
+          isTerminalStatus(data.status),
           Date.now() - startedAt,
         );
         state = step.state;
@@ -92,7 +90,7 @@ function SimulationDetail() {
 
   useEffect(() => {
     let cancelled = false;
-    if (simulation?.status !== "SUCCEEDED") return;
+    if (simulation?.status !== "succeeded") return;
     api
       .surfaceFieldBinary(projectId, simulationId)
       .catch(() => api.surfaceField(projectId, simulationId))
@@ -146,9 +144,8 @@ function SimulationDetail() {
             {typeof simulation.load_case?.name === "string" ? simulation.load_case.name : "Simulation"}
           </h1>
           <span className={`font-mono text-sm font-semibold ${statusColor(simulation.status)}`}>
-            {simulation.status === "QUEUED" && "Queued…"}
-            {simulation.status === "RUNNING" && "Solving…"}
-            {simulation.status}
+            {jobStatusLabel(simulation.status)}
+            {isTerminalStatus(simulation.status) ? "" : "…"}
           </span>
         </div>
       </div>
@@ -159,7 +156,7 @@ function SimulationDetail() {
         </div>
       )}
 
-      {!TERMINAL_STATUSES.has(simulation.status) && (
+      {!isTerminalStatus(simulation.status) && (
         <div className="flex items-center gap-3 rounded-lg bg-surface p-5 shadow-card">
           <span className="size-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <span className="text-sm text-muted">
@@ -215,14 +212,14 @@ function SimulationDetail() {
         </section>
       )}
 
-      {simulation.status === "SUCCEEDED" && (
+      {simulation.status === "succeeded" && (
         <ResultInterpretationPanel
           projectId={projectId}
           simulationId={simulationId}
         />
       )}
 
-      {surface && simulation.status === "SUCCEEDED" && (
+      {surface && simulation.status === "succeeded" && (
         <section>
           <h2 className="mb-3 text-lg font-semibold">Von Mises stress</h2>
           <WebGLStressViewer data={surface} />

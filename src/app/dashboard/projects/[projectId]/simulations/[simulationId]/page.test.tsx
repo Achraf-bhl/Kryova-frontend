@@ -64,7 +64,7 @@ describe("SimulationPage results", () => {
   it("renders mass_kg exactly as the API returns it -- never divided by 1000", async () => {
     readSimulation.mockResolvedValue({
       ...BASE_SIMULATION,
-      status: "SUCCEEDED",
+      status: "succeeded",
       error: null,
       result: {
         max_displacement_mm: 0.5,
@@ -91,7 +91,7 @@ describe("SimulationPage results", () => {
   it("renders max_von_mises_mpa with an explicit MPa unit label", async () => {
     readSimulation.mockResolvedValue({
       ...BASE_SIMULATION,
-      status: "SUCCEEDED",
+      status: "succeeded",
       error: null,
       result: {
         max_displacement_mm: 0.5,
@@ -114,7 +114,7 @@ describe("SimulationPage results", () => {
   it("renders a FAILED simulation's error state instead of a blank page or NaN", async () => {
     readSimulation.mockResolvedValue({
       ...BASE_SIMULATION,
-      status: "FAILED",
+      status: "failed",
       error: "Model is under-constrained: fixtures leave 2 rigid-body modes free.",
       result: null,
     });
@@ -125,6 +125,6 @@ describe("SimulationPage results", () => {
       await screen.findByText(/Model is under-constrained/),
     ).toBeInTheDocument();
     expect(screen.queryByText("NaN")).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("FAILED")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("Failed")).toBeInTheDocument());
   });
 });

@@ -44,7 +44,7 @@ describe("conversationToTurns", () => {
         tool_name: "run_simulation",
         label: "Run simulation",
         arguments: { element_size_mm: 4 },
-        result: { status: "SUCCEEDED" },
+        result: { status: "succeeded" },
         summary: "Solved in 12 s",
         duration_ms: 12_000,
       }),

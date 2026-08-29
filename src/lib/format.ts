@@ -10,13 +10,20 @@ export function formatDuration(seconds: number): string {
   return `${seconds.toFixed(2)} s`;
 }
 
+/**
+ * Tailwind token for a job status.
+ *
+ * Matches the API's lowercase spelling (see `types/api.ts` `JobStatus`). This
+ * used to switch on uppercase names, so every branch was dead and every status
+ * rendered `text-muted`.
+ */
 export function statusColor(status: string): string {
   switch (status) {
-    case "SUCCEEDED":
+    case "succeeded":
       return "text-success";
-    case "FAILED":
+    case "failed":
       return "text-danger";
-    case "RUNNING":
+    case "running":
       return "text-primary";
     default:
       return "text-muted";

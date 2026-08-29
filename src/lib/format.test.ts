@@ -24,12 +24,12 @@ describe("formatDuration", () => {
 
 describe("statusColor", () => {
   it("maps succeeded to success colour", () => {
-    expect(statusColor("SUCCEEDED")).toBe("text-success");
+    expect(statusColor("succeeded")).toBe("text-success");
   });
   it("maps failed to danger colour", () => {
-    expect(statusColor("FAILED")).toBe("text-danger");
+    expect(statusColor("failed")).toBe("text-danger");
   });
   it("defaults to muted for queued", () => {
-    expect(statusColor("QUEUED")).toBe("text-muted");
+    expect(statusColor("queued")).toBe("text-muted");
   });
 });

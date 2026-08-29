@@ -75,7 +75,43 @@ export interface LoadCasePayload {
   loads: Load[];
 }
 
-export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED";
+/**
+ * Job status, spelled exactly as the API serialises it.
+ *
+ * These are LOWERCASE because `app/models/simulation.py` declares
+ * `JobStatus(str, enum.Enum)` with lowercase values, and Pydantic serialises a
+ * str-enum by value. They were uppercase here for a long time, which meant
+ * `status === "SUCCEEDED"` was never true: the results page never fetched the
+ * surface field, the stress viewer never rendered, and every finished job
+ * polled until the 30-minute ceiling. The whole test suite stayed green because
+ * every fixture was written against this file rather than against the server.
+ *
+ * If you change these, change `app/models/simulation.py` in the same commit.
+ */
+export type JobStatus = "queued" | "running" | "succeeded" | "failed";
+
+/** Statuses after which a job will never change again. */
+export const TERMINAL_JOB_STATUSES: readonly JobStatus[] = ["succeeded", "failed"];
+
+export function isTerminalStatus(status: string): boolean {
+  return (TERMINAL_JOB_STATUSES as readonly string[]).includes(status);
+}
+
+/** Human-facing label for a status the API returned. */
+export function jobStatusLabel(status: string): string {
+  switch (status) {
+    case "queued":
+      return "Queued";
+    case "running":
+      return "Solving";
+    case "succeeded":
+      return "Succeeded";
+    case "failed":
+      return "Failed";
+    default:
+      return status;
+  }
+}
 
 export interface SimulationRead {
   id: string;
