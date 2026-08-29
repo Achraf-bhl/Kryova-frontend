@@ -1,10 +1,11 @@
 import { AgentChat } from "@/components/agent-chat";
+import { PageShell } from "@/components/ui/page-shell";
 
 export const dynamic = "force-dynamic";
 
 export default function AssistantPage() {
   return (
-    <div className="flex h-[calc(100vh-8rem)] flex-col gap-4">
+    <PageShell className="flex h-[calc(100dvh-4rem)] flex-col gap-4">
       <div>
         <h1 className="text-2xl font-semibold">Assistant</h1>
         <p className="text-sm text-muted">
@@ -15,6 +16,6 @@ export default function AssistantPage() {
       <div className="min-h-0 flex-1">
         <AgentChat />
       </div>
-    </div>
+    </PageShell>
   );
 }

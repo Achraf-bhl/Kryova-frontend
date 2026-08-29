@@ -1,5 +1,10 @@
 import { SkeletonGrid } from "@/components/skeleton";
+import { PageShell } from "@/components/ui/page-shell";
 
 export default function SimulationLoading() {
-  return <SkeletonGrid count={4} />;
+  return (
+    <PageShell>
+      <SkeletonGrid count={4} />
+    </PageShell>
+  );
 }

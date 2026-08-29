@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { SurfaceField } from "@/types/api";
+import type { SurfaceFieldArrays } from "@/lib/surface-field";
 
 const VERTEX_SHADER = `
 attribute vec3 a_position;
@@ -43,6 +43,9 @@ void main() {
 }
 `;
 
+const MIN_DISTANCE = 0.8;
+const MAX_DISTANCE = 8;
+
 function compileShader(gl: WebGLRenderingContext, source: string, type: number): WebGLShader {
   const shader = gl.createShader(type)!;
   gl.shaderSource(shader, source);
@@ -54,19 +57,21 @@ function compileShader(gl: WebGLRenderingContext, source: string, type: number):
 }
 
 interface Props {
-  data: SurfaceField;
+  data: SurfaceFieldArrays;
 }
 
 export function WebGLStressViewer({ data }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rotationRef = useRef({ x: -0.5, y: 0.7 });
   const draggingRef = useRef(false);
-  const lastMouseRef = useRef({ x: 0, y: 0 });
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const lastPinchDistanceRef = useRef<number | null>(null);
   const distanceRef = useRef(3);
   const [scaleFactor, setScaleFactor] = useState(5);
   const [error, setError] = useState<string | null>(null);
+  const [contextLost, setContextLost] = useState(false);
+  /** Bumped on `webglcontextrestored` to rebuild every GL object from scratch. */
+  const [glGeneration, setGlGeneration] = useState(0);
 
   // Everything the displacement-scale effect needs to refresh the geometry
   // without rebuilding the GL program. `scaleFactor` is deliberately NOT a
@@ -76,9 +81,48 @@ export function WebGLStressViewer({ data }: Props) {
   const scaleFactorRef = useRef(scaleFactor);
   const refreshGeometryRef = useRef<((scale: number) => void) | null>(null);
 
+  /**
+   * Ask for one frame.
+   *
+   * The viewer is a static scene: nothing moves unless the user drags, pinches,
+   * scrolls, moves the slider, or the canvas resizes. A free-running
+   * `requestAnimationFrame` loop would redraw an unchanged mesh 60 times a
+   * second forever — on a laptop that is a warm fan and a flat battery for no
+   * pixels gained. `geometry-preview.tsx` already renders on demand; this is
+   * the same idea, one step further: with nothing dirty there is no scheduled
+   * frame at all.
+   */
+  const invalidateRef = useRef<() => void>(() => {});
+  const invalidate = useCallback(() => invalidateRef.current(), []);
+
+  // WebGL contexts are a finite, revocable resource: the driver resets, the GPU
+  // is switched, or the tab is backgrounded long enough to be reclaimed. The
+  // default behaviour is a permanently blank canvas with nothing in the console.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    function handleLost(event: Event) {
+      // Without preventDefault the browser will not fire `webglcontextrestored`.
+      event.preventDefault();
+      setContextLost(true);
+    }
+    function handleRestored() {
+      setContextLost(false);
+      setGlGeneration((generation) => generation + 1);
+    }
+
+    canvas.addEventListener("webglcontextlost", handleLost);
+    canvas.addEventListener("webglcontextrestored", handleRestored);
+    return () => {
+      canvas.removeEventListener("webglcontextlost", handleLost);
+      canvas.removeEventListener("webglcontextrestored", handleRestored);
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || contextLost) return;
     const gl = canvas.getContext("webgl");
     if (!gl) {
       setError("WebGL is not available in this browser.");
@@ -97,11 +141,11 @@ export function WebGLStressViewer({ data }: Props) {
       }
       gl.useProgram(program);
 
-      const positions = new Float32Array(data.node_positions.flat());
-      const displacements = new Float32Array(data.displacements.flat());
-      const triangles = data.triangles.flat();
-      const stressPerVertex = data.von_mises_mpa;
-      const maxStress = data.max_von_mises_mpa || 1;
+      // Typed arrays straight off the wire — no boxing, no `.flat()`, no copy.
+      const positions = data.positions;
+      const displacements = data.displacements;
+      const triangles = data.triangles;
+      const maxStress = data.maxVonMisesMpa || 1;
 
       /** Vertex positions and normals at a given displacement scale.
        *
@@ -167,9 +211,9 @@ export function WebGLStressViewer({ data }: Props) {
       const { displaced, normals } = computeGeometry(scaleFactorRef.current);
 
       // Per-vertex stress normalised
-      const stresses = new Float32Array(stressPerVertex.length);
+      const stresses = new Float32Array(data.vonMisesMpa.length);
       for (let i = 0; i < stresses.length; i++) {
-        stresses[i] = stressPerVertex[i] / maxStress;
+        stresses[i] = data.vonMisesMpa[i] / maxStress;
       }
 
       // Buffers
@@ -204,48 +248,37 @@ export function WebGLStressViewer({ data }: Props) {
       for (const index of triangles) {
         if (index > maxIndex) maxIndex = index;
       }
-      let indices: Uint16Array | Uint32Array;
-      if (maxIndex <= 65535) {
-        indices = new Uint16Array(triangles);
-      } else {
-        gl.getExtension("OES_element_index_uint");
-        indices = new Uint32Array(triangles);
-      }
+      // Above 65535 the Uint32Array is used as-is: it is already the parsed
+      // view onto the response body, so the large-mesh path allocates nothing.
+      const indices: Uint16Array | Uint32Array =
+        maxIndex <= 65535 ? new Uint16Array(triangles) : triangles;
+      if (indices instanceof Uint32Array) gl.getExtension("OES_element_index_uint");
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
 
       const indexType = indices instanceof Uint32Array ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT;
       const indexCount = triangles.length;
 
-      // Re-upload just the vertex data when the slider moves. Same byte length
-      // every time, so bufferSubData reuses the existing allocation and the
-      // program, shaders, stress buffer and index buffer are all left alone.
-      refreshGeometryRef.current = (scale: number) => {
-        const next = computeGeometry(scale);
-        gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.displaced);
-        gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.normals);
-      };
-
-      // Cache the drawing buffer size; only resize when it actually changes.
-      let lastWidth = 0;
-      let lastHeight = 0;
-
       // Uniforms
       const uModelView = gl.getUniformLocation(program, "u_modelView");
       const uProjection = gl.getUniformLocation(program, "u_projection");
 
-      let animationId: number;
-      function render() {
-        if (!canvas || !gl) return;
-        const { width: cssW, height: cssH } = canvas.getBoundingClientRect();
-        const newWidth = Math.round(cssW * devicePixelRatio);
-        const newHeight = Math.round(cssH * devicePixelRatio);
-        if (newWidth !== lastWidth || newHeight !== lastHeight) {
-          canvas.width = newWidth;
-          canvas.height = newHeight;
-          lastWidth = newWidth;
-          lastHeight = newHeight;
+      // Cached CSS size. Measured by ResizeObserver rather than by
+      // getBoundingClientRect inside the frame: reading layout every frame
+      // forces a synchronous reflow at 60fps, which is the expensive half of
+      // the old loop even when nothing was drawn.
+      let cssWidth = canvas.clientWidth;
+      let cssHeight = canvas.clientHeight;
+      let frameHandle = 0;
+      let disposed = false;
+
+      function draw() {
+        if (!canvas || !gl || disposed || gl.isContextLost()) return;
+        const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
+        const width = Math.max(1, Math.round(cssWidth * ratio));
+        const height = Math.max(1, Math.round(cssHeight * ratio));
+        if (canvas.width !== width || canvas.height !== height) {
+          canvas.width = width;
+          canvas.height = height;
         }
         gl.viewport(0, 0, canvas.width, canvas.height);
         gl.clearColor(0.96, 0.97, 0.98, 1.0);
@@ -282,16 +315,63 @@ export function WebGLStressViewer({ data }: Props) {
         gl.uniformMatrix4fv(uProjection, false, proj);
 
         gl.drawElements(gl.TRIANGLES, indexCount, indexType, 0);
-        animationId = requestAnimationFrame(render);
       }
-      render();
+
+      function scheduleDraw() {
+        if (disposed || frameHandle !== 0) return;
+        frameHandle = requestAnimationFrame(() => {
+          frameHandle = 0;
+          draw();
+        });
+      }
+      invalidateRef.current = scheduleDraw;
+
+      // Re-upload just the vertex data when the slider moves. Same byte length
+      // every time, so bufferSubData reuses the existing allocation and the
+      // program, shaders, stress buffer and index buffer are all left alone.
+      refreshGeometryRef.current = (scale: number) => {
+        if (disposed || gl.isContextLost()) return;
+        const next = computeGeometry(scale);
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.displaced);
+        gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.normals);
+        scheduleDraw();
+      };
+
+      let observer: ResizeObserver | null = null;
+      function handleWindowResize() {
+        cssWidth = canvas!.clientWidth;
+        cssHeight = canvas!.clientHeight;
+        scheduleDraw();
+      }
+      if (typeof ResizeObserver !== "undefined") {
+        observer = new ResizeObserver((entries) => {
+          const box = entries[0]?.contentRect;
+          if (!box) return;
+          cssWidth = box.width;
+          cssHeight = box.height;
+          scheduleDraw();
+        });
+        observer.observe(canvas);
+      } else {
+        // jsdom and very old browsers. One layout read per resize event, not per frame.
+        window.addEventListener("resize", handleWindowResize);
+      }
+
+      scheduleDraw();
 
       return () => {
-        cancelAnimationFrame(animationId);
+        disposed = true;
+        if (frameHandle !== 0) cancelAnimationFrame(frameHandle);
+        observer?.disconnect();
+        window.removeEventListener("resize", handleWindowResize);
         refreshGeometryRef.current = null;
-        gl.getExtension("WEBGL_lose_context")?.loseContext();
-        // Delete every GL object. This now runs only when `data` changes or the
-        // component unmounts, not on every slider tick.
+        invalidateRef.current = () => {};
+        // Delete every GL object. Note this does NOT call
+        // WEBGL_lose_context.loseContext(): a force-lost context is never
+        // handed back by getContext(), so doing that here would leave the
+        // canvas permanently blank the next time this effect re-ran.
         gl.deleteProgram(program);
         gl.deleteShader(vs);
         gl.deleteShader(fs);
@@ -302,7 +382,7 @@ export function WebGLStressViewer({ data }: Props) {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to initialise WebGL viewer.");
     }
-  }, [data]);
+  }, [data, contextLost, glGeneration]);
 
   // Slider changes touch vertex data only -- see refreshGeometryRef above.
   useEffect(() => {
@@ -310,21 +390,10 @@ export function WebGLStressViewer({ data }: Props) {
     refreshGeometryRef.current?.(scaleFactor);
   }, [scaleFactor]);
 
-  function updatePointerRotation(dx: number, dy: number) {
-    rotationRef.current.y += dx * 0.01;
-    rotationRef.current.x += dy * 0.01;
-  }
-
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     canvasRef.current?.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pointersRef.current.size === 1) {
-      draggingRef.current = true;
-      const point = pointersRef.current.values().next().value;
-      if (point) {
-        lastMouseRef.current = { x: point.x, y: point.y };
-      }
-    }
+    if (pointersRef.current.size === 1) draggingRef.current = true;
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -333,16 +402,22 @@ export function WebGLStressViewer({ data }: Props) {
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (pointersRef.current.size === 1 && draggingRef.current) {
-      updatePointerRotation(event.clientX - previous.x, event.clientY - previous.y);
+      rotationRef.current.y += (event.clientX - previous.x) * 0.01;
+      rotationRef.current.x += (event.clientY - previous.y) * 0.01;
+      invalidate();
       return;
     }
 
     if (pointersRef.current.size === 2) {
       const points = Array.from(pointersRef.current.values());
       const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
-      if (lastPinchDistanceRef.current !== null) {
+      if (lastPinchDistanceRef.current !== null && distance > 0) {
         const scale = lastPinchDistanceRef.current / distance;
-        distanceRef.current = Math.min(8, Math.max(0.8, distanceRef.current * scale));
+        distanceRef.current = Math.min(
+          MAX_DISTANCE,
+          Math.max(MIN_DISTANCE, distanceRef.current * scale),
+        );
+        invalidate();
       }
       lastPinchDistanceRef.current = distance;
     }
@@ -358,9 +433,10 @@ export function WebGLStressViewer({ data }: Props) {
   function handleWheel(event: React.WheelEvent<HTMLCanvasElement>) {
     event.preventDefault();
     distanceRef.current = Math.min(
-      8,
-      Math.max(0.8, distanceRef.current * (event.deltaY > 0 ? 1.08 : 0.93)),
+      MAX_DISTANCE,
+      Math.max(MIN_DISTANCE, distanceRef.current * (event.deltaY > 0 ? 1.08 : 0.93)),
     );
+    invalidate();
   }
 
   if (error) {
@@ -373,19 +449,31 @@ export function WebGLStressViewer({ data }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      <canvas
-        ref={canvasRef}
-        className="w-full cursor-grab touch-none rounded-lg border border-border bg-muted/10 active:cursor-grabbing"
-        style={{ aspectRatio: "16 / 10" }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        onWheel={handleWheel}
-      />
+      <div className="relative">
+        <canvas
+          ref={canvasRef}
+          className="w-full cursor-grab touch-none rounded-lg border border-border bg-muted/10 active:cursor-grabbing"
+          style={{ aspectRatio: "16 / 10" }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          onWheel={handleWheel}
+        />
+        {contextLost && (
+          <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-surface/90 p-6 text-center text-sm text-muted">
+            The graphics context was lost — usually a driver reset or a
+            backgrounded tab. The view rebuilds itself as soon as the browser
+            hands it back; the numbers above are unaffected.
+          </div>
+        )}
+      </div>
       <div className="flex items-center gap-3 text-sm">
-        <span className="text-muted">Displacement</span>
+        <label className="text-muted" htmlFor="displacement-scale">
+          Displacement
+        </label>
         <input
+          id="displacement-scale"
           type="range"
           min={0}
           max={20}
@@ -404,7 +492,7 @@ export function WebGLStressViewer({ data }: Props) {
             background: "linear-gradient(to right, #1a33e6, #00cc33, #ffff00, #f22619)",
           }}
         />
-        <span>{data.max_von_mises_mpa.toFixed(1)} MPa</span>
+        <span>{data.maxVonMisesMpa.toFixed(1)} MPa</span>
       </div>
     </div>
   );

@@ -31,10 +31,10 @@ function Step({ step }: { step: StepView }) {
     <li className="relative pl-6">
       {/* Timeline rail. The dot sits on it; the line joins it to the next step. */}
       <span
-        className="absolute left-[3px] top-4 h-full w-px bg-border last:hidden"
+        className="absolute left-0.75 top-4 h-full w-px bg-border last:hidden"
         aria-hidden
       />
-      <span className={`absolute left-0 top-[6px] h-[7px] w-[7px] rounded-full ${dot}`} aria-hidden />
+      <span className={`absolute left-0 top-1.5 h-1.75 w-1.75 rounded-full ${dot}`} aria-hidden />
 
       <button
         type="button"

@@ -1,27 +1,372 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Kryova design system.
+
+   The palette is derived from two things this product already owns: blueprint
+   paper (the cool paper wash and the deep ink blue) and the von Mises stress
+   ramp the WebGL viewer renders (blue -> cyan -> green -> amber -> red). The
+   ramp is not decoration here; it is the app's own visual language, reused as
+   the brand gradient, so the mark on the home screen and the contour on a
+   result page speak the same colour.
+
+   Token *names* are unchanged from the previous system so existing components
+   (bg-surface, text-muted, border-border, ...) keep working; only the values
+   moved.
+--------------------------------------------------------------------------- */
+
 @theme {
+  /* -- surfaces ---------------------------------------------------------- */
   --color-surface: #ffffff;
-  --color-canvas: #f8fafc;
-  --color-border: #e2e8f0;
-  --color-muted: #64748b;
-  --color-accent: #0f172a;
-  --color-primary: #2563eb;
-  --color-danger: #dc2626;
+  --color-surface-sunken: #f5f8fe;
+  --color-canvas: #eef3fc;
+  --color-canvas-deep: #e3ebfa;
+  --color-border: #dbe4f3;
+  --color-border-strong: #c3d2ea;
+
+  /* -- ink --------------------------------------------------------------- */
+  /* Blue-shifted rather than neutral grey, so text sits in the same family
+     as the accents instead of reading as a separate greyscale layer. */
+  --color-accent: #0d1420;
+  --color-muted: #5a6b85;
+  --color-faint: #8598b4;
+
+  /* -- blues ------------------------------------------------------------- */
+  --color-blueprint: #1b3a8c; /* deep ink: wordmark, primary buttons */
+  --color-primary: #2f6bff; /* interactive: focus, send, links */
+  --color-primary-hover: #1d54e8;
+  --color-primary-soft: #e8effe;
+  --color-cyan-tint: #7cc6f5;
+
+  /* -- stress ramp (shared with the results viewer) ---------------------- */
+  --color-ramp-0: #1b3a8c;
+  --color-ramp-1: #2f6bff;
+  --color-ramp-2: #7cc6f5;
+  --color-ramp-3: #8fe3c4;
+  --color-ramp-4: #f0a03c;
+  --color-ramp-5: #e2503f;
+
+  /* -- status ------------------------------------------------------------ */
+  /* Amber is the single warm counterpoint in an otherwise cold palette, and
+     it is the same amber as the loaded end of the ramp. */
+  --color-warning: #f0a03c;
+  --color-danger: #e2503f;
   --color-success: #16a34a;
+  --color-live: #22c55e;
 
-  --font-sans: var(--font-sans), system-ui, sans-serif;
+  /* -- type -------------------------------------------------------------- */
+  /* Three roles, each with a job: display carries personality, sans carries
+     dense UI copy, mono carries every number that has a unit. In an FEA
+     product the mono is semantic, not stylistic -- mm, N, MPa, element
+     counts and ids are all set in it so a measurement never reads as prose. */
+  /* The `--font-*-src` names are what next/font injects (see layout.tsx). They
+     must differ from the token names below: `--font-sans: var(--font-sans)`
+     is a circular reference at :root and silently resolves to nothing. */
+  --font-display: var(--font-display-src), "Space Grotesk", system-ui, sans-serif;
+  --font-sans: var(--font-sans-src), "Inter", system-ui, sans-serif;
+  --font-mono: var(--font-mono-src), "JetBrains Mono", ui-monospace, monospace;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
 
-  --shadow-card: 0 1px 3px rgb(0 0 0 / 0.06), 0 1px 2px rgb(0 0 0 / 0.04);
-  --shadow-raised: 0 4px 12px rgb(0 0 0 / 0.08);
+  --shadow-card: 0 1px 2px rgb(13 20 32 / 0.04), 0 2px 8px rgb(27 58 140 / 0.05);
+  --shadow-raised: 0 4px 16px rgb(27 58 140 / 0.09), 0 1px 3px rgb(13 20 32 / 0.05);
+  --shadow-composer: 0 2px 6px rgb(13 20 32 / 0.04), 0 12px 32px rgb(27 58 140 / 0.10);
 }
 
+/* ---------------------------------------------------------------------------
+   Canvas: blueprint paper.
+
+   A single faint grid at one scale, not a nested millimetre/centimetre pair --
+   one scale reads as a drawing plane, two read as a dashboard template. It is
+   deliberately near the threshold of visibility; the orb is the loud element
+   on this page, and this is the quiet one.
+--------------------------------------------------------------------------- */
+
 body {
-  background: var(--color-canvas);
+  background-color: var(--color-canvas);
+  background-image:
+    linear-gradient(to bottom, rgb(255 255 255 / 0.55), transparent 42%),
+    radial-gradient(ellipse 80% 55% at 50% 0%, rgb(124 198 245 / 0.18), transparent 70%),
+    linear-gradient(to right, rgb(27 58 140 / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(27 58 140 / 0.035) 1px, transparent 1px);
+  background-size: 100% 100%, 100% 100%, 28px 28px, 28px 28px;
   color: var(--color-accent);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------------------------------------------------------------------------
+   Components
+--------------------------------------------------------------------------- */
+
+@layer components {
+  /* Panels float above the drawing plane. */
+  .k-panel {
+    background: color-mix(in srgb, var(--color-surface) 82%, transparent);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-card);
+  }
+
+  /* The greeting. Gradient runs only across the cool half of the ramp -- an
+     unloaded part is blue, and there is nothing to analyse yet. */
+  .k-display-gradient {
+    background: linear-gradient(
+      100deg,
+      var(--color-blueprint) 0%,
+      var(--color-primary) 45%,
+      var(--color-cyan-tint) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* --- signature: the mesh orb ----------------------------------------- */
+  /* A tessellated sphere carrying the stress ramp. It is the product in one
+     mark: Kryova meshes a part and colours it by stress. At rest it sits in
+     the cool end (no load applied); `data-state="working"` warms it toward
+     amber while the agent runs, so the motion reports something true rather
+     than decorating the page. */
+  .k-orb {
+    position: relative;
+    border-radius: 9999px;
+    background:
+      radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.92), transparent 38%),
+      conic-gradient(
+        from 210deg,
+        var(--color-ramp-0),
+        var(--color-ramp-1) 28%,
+        var(--color-ramp-2) 48%,
+        var(--color-ramp-3) 62%,
+        var(--color-ramp-1) 82%,
+        var(--color-ramp-0)
+      );
+    box-shadow:
+      inset 0 -8px 24px rgb(13 20 32 / 0.30),
+      0 12px 40px rgb(47 107 255 / 0.28);
+    animation: k-orb-spin 34s linear infinite;
+  }
+
+  .k-orb[data-state="working"] {
+    background:
+      radial-gradient(circle at 32% 28%, rgb(255 255 255 / 0.92), transparent 38%),
+      conic-gradient(
+        from 210deg,
+        var(--color-ramp-1),
+        var(--color-ramp-2) 22%,
+        var(--color-ramp-3) 42%,
+        var(--color-ramp-4) 64%,
+        var(--color-ramp-5) 78%,
+        var(--color-ramp-1)
+      );
+    animation-duration: 9s;
+  }
+
+  /* The mesh itself: the wireframe overlay that makes it a meshed body rather
+     than a gradient blob. */
+  .k-orb-mesh {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    opacity: 0.28;
+    mix-blend-mode: overlay;
+    pointer-events: none;
+  }
+
+  /* --- composer --------------------------------------------------------- */
+  .k-composer {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-composer);
+    transition: border-color 160ms ease, box-shadow 160ms ease;
+  }
+
+  .k-composer:focus-within {
+    border-color: var(--color-primary);
+    box-shadow:
+      var(--shadow-composer),
+      0 0 0 4px color-mix(in srgb, var(--color-primary) 14%, transparent);
+  }
+
+  /* A pill that toggles. Reused for deep-analysis, attachments, CATIA state. */
+  .k-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.6875rem;
+    border-radius: 9999px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-muted);
+    font-size: 0.8125rem;
+    line-height: 1.25rem;
+    transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+
+  .k-pill:hover:not(:disabled) {
+    border-color: var(--color-border-strong);
+    color: var(--color-accent);
+  }
+
+  .k-pill[data-active="true"] {
+    background: var(--color-primary-soft);
+    border-color: color-mix(in srgb, var(--color-primary) 34%, transparent);
+    color: var(--color-blueprint);
+  }
+
+  /* --- suggestion cards ------------------------------------------------- */
+  .k-suggestion {
+    text-align: left;
+    background: color-mix(in srgb, var(--color-surface) 78%, transparent);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  }
+
+  .k-suggestion:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--color-primary) 38%, transparent);
+    box-shadow: var(--shadow-raised);
+  }
+
+  /* --- sidebar ---------------------------------------------------------- */
+  .k-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.4375rem 0.625rem;
+    border-radius: var(--radius-sm);
+    color: var(--color-muted);
+    font-size: 0.875rem;
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  .k-nav-item:hover {
+    background: var(--color-primary-soft);
+    color: var(--color-accent);
+  }
+
+  .k-nav-item[aria-current="page"] {
+    background: var(--color-primary-soft);
+    color: var(--color-blueprint);
+    font-weight: 500;
+  }
+
+  /* A conversation's state dot. Filled = a CATIA document is bound to this
+     conversation and reopening it reopens the part; hollow = analysis only.
+     This is information the user needs before clicking, not ornament. */
+  .k-conv-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    flex-shrink: 0;
+    border: 1.5px solid var(--color-faint);
+  }
+
+  .k-conv-dot[data-bound="true"] {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Motion. One orchestrated entrance, then stillness.
+--------------------------------------------------------------------------- */
+
+@keyframes k-orb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes k-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes k-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes k-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.k-rise {
+  animation: k-rise 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.k-fade {
+  animation: k-fade 420ms ease both;
+}
+
+.k-pulse {
+  animation: k-pulse 1.6s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Quality floor
+--------------------------------------------------------------------------- */
+
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The orb keeps its colour but stops rotating, rather than disappearing. */
+  .k-orb {
+    animation: none;
+  }
+}
+
+/* Scrollbars inside panels, so the sidebar's history list does not punch a
+   grey system scrollbar through the blueprint palette. */
+.k-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+.k-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.k-scroll::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }

@@ -5,12 +5,9 @@ import { useCallback, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CatiaBridgePanel } from "@/components/catia-bridge-panel";
-import { api } from "@/lib/api-client";
+import { uploadGeometryFile } from "@/lib/chunked-upload";
 import { formatBytes, statusColor } from "@/lib/format";
 import type { GeometryVersionRead, ProjectRead, SimulationRead } from "@/types/api";
-
-const CHUNKED_THRESHOLD = 16 * 1024 * 1024;
-const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
 
 function getLoadCaseName(simulation: SimulationRead): string {
   if (simulation.load_case && typeof simulation.load_case === "object" && "name" in simulation.load_case) {
@@ -39,20 +36,9 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
       setUploading(true);
       setError(null);
       try {
-        let version: GeometryVersionRead;
-        if (file.size > CHUNKED_THRESHOLD) {
-          const session = await api.beginUpload(file.name, file.size, UPLOAD_CHUNK_SIZE);
-          for (let index = 0; index < session.total_chunks; index++) {
-            const start = index * session.chunk_size;
-            const end = Math.min(start + session.chunk_size, file.size);
-            await api.uploadChunk(session.id, index, file.slice(start, end));
-            setUploadProgress(Math.round(((index + 1) / session.total_chunks) * 100));
-          }
-          const media = await api.completeUpload(session.id);
-          version = await api.attachGeometry(projectId, media.id);
-        } else {
-          version = await api.uploadGeometry(projectId, file);
-        }
+        const version = await uploadGeometryFile(projectId, file, {
+          onProgress: setUploadProgress,
+        });
         setGeometryVersions((previous) => [version, ...previous]);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Upload failed");
@@ -78,8 +64,6 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
           )}
         </div>
       </div>
-
-      <CatiaBridgePanel />
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
@@ -164,6 +148,14 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Moved out of the top slot: whether a workstation is connected matters
+          when you are about to ask for geometry, not above a list of files. The
+          live signal lives in the composer chip now; this is the fuller read. */}
+      <section>
+        <h2 className="mb-3 text-lg font-semibold">CATIA</h2>
+        <CatiaBridgePanel />
       </section>
     </div>
   );

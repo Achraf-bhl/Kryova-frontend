@@ -1,41 +1,30 @@
-import SignOutButton from "./_components/sign-out-button";
+import { Sidebar } from "./_components/sidebar";
 
 import { ErrorBoundary } from "@/components/error-boundary";
-import { fetchCurrentUser } from "@/lib/server-api";
+import { fetchConversationsSafe, fetchCurrentUser } from "@/lib/server-api";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * The authenticated shell: a persistent sidebar and one scrolling main area.
+ *
+ * Both halves are fetched here, in parallel, so the sidebar's history is in the
+ * first paint rather than arriving after a client round-trip. The list is
+ * fetched with the tolerant variant — a chat sidebar that 500s the entire
+ * dashboard because one endpoint is unavailable would be a poor trade.
+ */
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const user = await fetchCurrentUser();
+  const [user, conversations] = await Promise.all([
+    fetchCurrentUser(),
+    fetchConversationsSafe(),
+  ]);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-10 border-b border-border bg-surface/80 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <div className="flex items-center gap-5">
-            <a href="/dashboard" className="text-base font-semibold">
-              Kryova
-            </a>
-            <a
-              href="/dashboard/assistant"
-              className="text-sm text-muted transition-colors hover:text-accent"
-            >
-              Assistant
-            </a>
-            <a
-              href="/dashboard/settings"
-              className="text-sm text-muted transition-colors hover:text-accent"
-            >
-              Settings
-            </a>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted">{user.email}</span>
-            <SignOutButton />
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
+    <div className="flex h-dvh overflow-hidden">
+      <Sidebar user={user} initialConversations={conversations} />
+      {/* `min-w-0` so a long code block in a chat message cannot widen the flex
+          child and push the sidebar off-screen. */}
+      <main className="min-w-0 flex-1 overflow-y-auto pt-14 md:pt-0">
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>
     </div>

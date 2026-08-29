@@ -1,11 +1,12 @@
 import { SkeletonCard, SkeletonLine } from "@/components/skeleton";
+import { PageShell } from "@/components/ui/page-shell";
 
 export default function ProjectLoading() {
   return (
-    <div className="flex flex-col gap-8">
+    <PageShell className="flex flex-col gap-8">
       <SkeletonLine className="h-8 w-64" />
       <SkeletonCard />
       <SkeletonCard />
-    </div>
+    </PageShell>
   );
 }

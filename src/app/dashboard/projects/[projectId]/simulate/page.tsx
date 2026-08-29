@@ -136,7 +136,7 @@ export default function SimulatePage() {
   }
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-8">
+    <div className="mx-auto flex max-w-2xl flex-col gap-8 px-4 py-8 sm:px-6">
       <div>
         <Link href={`/dashboard/projects/${projectId}`} className="text-sm text-muted hover:text-accent">
           ← Back to project

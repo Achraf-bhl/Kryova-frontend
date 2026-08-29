@@ -14,7 +14,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       <input
         ref={ref}
         id={id}
-        className="h-10 rounded-md border border-border bg-surface px-3 text-accent outline-none transition-shadow placeholder:text-muted/60 focus:border-primary focus:shadow-[0_0_0_3px_rgb(37_99_235_/_0.12)]"
+        className="h-10 rounded-md border border-border bg-surface px-3 text-accent outline-none transition-shadow placeholder:text-muted/60 focus:border-primary focus:shadow-[0_0_0_3px_rgb(37_99_235/0.12)]"
         {...props}
       />
     </label>

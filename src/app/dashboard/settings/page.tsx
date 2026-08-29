@@ -1,7 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { CatiaDeviceManager } from "@/components/catia/device-manager";
+import { PageShell } from "@/components/ui/page-shell";
 import { api } from "@/lib/api-client";
 import type { AIStatus } from "@/types/api";
 
@@ -38,25 +41,44 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="space-y-6">
+    <PageShell className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-sm text-muted">Which model powers the assistant.</p>
+        <h1 className="font-display text-2xl font-semibold">Settings</h1>
+        <p className="text-sm text-muted">
+          The model behind the agent, and the workstation it drives CATIA on.
+        </p>
       </div>
 
-      <section className="rounded-lg border border-border bg-surface p-4 shadow-card">
-        <h2 className="mb-3 text-sm font-semibold">Current provider</h2>
-        {error && <p className="text-sm text-danger">{error}</p>}
+      {/* The anchor the composer's CATIA chip and the bridge panel link to. */}
+      <section id="catia" className="scroll-mt-6 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-accent">CATIA workstations</h2>
+          <p className="mt-1 max-w-prose text-sm text-muted">
+            The bridge runs on the Windows machine with CATIA and connects out to Kryova, so
+            there is no port to open and nothing to expose. Each chat then owns one CATIA
+            document.
+          </p>
+        </div>
+        <CatiaDeviceManager />
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold text-accent">Current model provider</h2>
+        {error && (
+          <p role="alert" className="text-sm text-danger">
+            {error}
+          </p>
+        )}
         {!status && !error && <p className="text-sm text-muted">Checking…</p>}
         {status && (
-          <div className="space-y-2">
+          <div className="k-panel space-y-2 p-4">
             <div className="flex flex-wrap items-center gap-3">
               <span
-                className={`h-2 w-2 rounded-full ${status.enabled ? "bg-success" : "bg-danger"}`}
-                aria-hidden
+                className={`h-2 w-2 rounded-full ${status.enabled ? "bg-live" : "bg-danger"}`}
+                aria-hidden="true"
               />
               <span className="text-sm font-medium">{status.provider}</span>
-              <span className="rounded bg-canvas px-2 py-0.5 font-mono text-xs text-muted">
+              <span className="rounded-sm bg-surface-sunken px-2 py-0.5 font-mono text-xs text-muted">
                 {status.model}
               </span>
               <span className="text-xs text-muted">
@@ -73,33 +95,47 @@ export default function SettingsPage() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-sm font-semibold">Switching provider</h2>
+        <h2 className="text-sm font-semibold text-accent">Switching provider</h2>
         {/* Deliberately env-var based rather than a form: the setting belongs to
             the backend process, and a runtime override would need its own
             precedence rules and a place to store a key safely. */}
         <p className="text-sm text-muted">
-          Set these in the backend&apos;s <code className="text-xs">.env</code>, then
+          Set these in the backend&apos;s <code className="font-mono text-xs">.env</code>, then
           restart it.
         </p>
         <div className="grid gap-3 md:grid-cols-3">
           {PROVIDERS.map((provider) => (
             <div
               key={provider.id}
-              className={`rounded-lg border p-3 ${
+              className={`rounded-md border p-3 ${
                 status?.provider === provider.id
-                  ? "border-primary bg-primary/5"
+                  ? "border-primary bg-primary-soft"
                   : "border-border bg-surface"
               }`}
             >
               <p className="text-sm font-medium">{provider.name}</p>
               <p className="mt-1 text-xs text-muted">{provider.blurb}</p>
-              <pre className="mt-2 overflow-x-auto rounded bg-canvas p-2 text-[11px] leading-relaxed text-muted">
+              <pre className="k-scroll mt-2 overflow-x-auto rounded-sm bg-surface-sunken p-2 font-mono text-[0.6875rem] leading-relaxed text-muted">
                 {provider.env}
               </pre>
             </div>
           ))}
         </div>
       </section>
-    </div>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold text-accent">Something not working?</h2>
+        <p className="text-sm text-muted">
+          The setup wizard checks the API, the database, the solver and the model provider one
+          by one and tells you which is at fault.
+        </p>
+        <Link
+          href="/setup"
+          className="inline-block rounded-md border border-border bg-surface px-3 py-1.5 text-sm font-medium text-accent hover:border-border-strong"
+        >
+          Open the setup check
+        </Link>
+      </section>
+    </PageShell>
   );
 }

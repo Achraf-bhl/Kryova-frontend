@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { AgentStepList } from "@/components/agent-step-list";
+import { MarkdownMessage } from "@/components/markdown-message";
 import { Button } from "@/components/ui/button";
 import { useAgentChat } from "@/hooks/use-agent-chat";
 
@@ -88,8 +89,8 @@ export function AgentChat({
           </div>
         )}
 
-        {turns.map((turn, index) => (
-          <div key={index} className="space-y-2">
+        {turns.map((turn) => (
+          <div key={turn.id} className="space-y-2">
             {turn.role === "user" ? (
               <p className="ml-auto max-w-[85%] rounded-lg rounded-br-sm bg-primary px-3 py-2 text-sm text-white">
                 {turn.content}
@@ -97,7 +98,9 @@ export function AgentChat({
             ) : (
               <>
                 {turn.steps && turn.steps.length > 0 && <AgentStepList steps={turn.steps} />}
-                <p className="max-w-[95%] whitespace-pre-wrap text-sm text-accent">{turn.content}</p>
+                <div className="max-w-[95%]">
+                  <MarkdownMessage content={turn.content} />
+                </div>
                 {turn.truncated && (
                   <p className="text-xs text-danger">
                     The assistant ran out of steps for that turn — try narrowing the question.

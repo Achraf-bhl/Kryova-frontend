@@ -1,7 +1,14 @@
 export { AgentStepList, type StepView } from "./agent-step-list";
 export { CatiaBridgePanel } from "./catia-bridge-panel";
+export { CatiaDeviceManager } from "./catia/device-manager";
+export { AttachPill } from "./chat/attach-pill";
+export { CatiaChip } from "./chat/catia-chip";
+export { ChatView } from "./chat/chat-view";
+export { Composer } from "./chat/composer";
 export { ErrorBoundary } from "./error-boundary";
 export { GeometryPreview } from "./geometry-preview";
+export { MarkdownMessage } from "./markdown-message";
+export { MeshOrb } from "./mesh-orb";
 export { ResultInterpretationPanel } from "./result-interpretation";
 export { SkeletonCard, SkeletonGrid, SkeletonLine } from "./skeleton";
 export { WebGLStressViewer } from "./webgl-stress-viewer";

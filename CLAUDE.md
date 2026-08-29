@@ -28,7 +28,7 @@ pnpm/npm install       (npm is what the lockfile tracks — package-lock.json)
 npm run dev            dev server
 npm run build          production build
 npm start              serve the build
-npm run test           vitest run  (21 tests, ~1s)
+npm run test           vitest run  (167 tests, ~4s)
 npm run lint           eslint
 npx tsc --noEmit       typecheck
 npm run setup          scripts/setup.mjs — checks Node, installs, writes .env.local, builds
@@ -48,26 +48,50 @@ src/
     (auth)/{login,register}/          route group, unauthenticated shell
     setup/                            health-check + onboarding wizard
     dashboard/
-      layout.tsx                      server auth gate + header
-      page.tsx                        project list (Server Component)
-      _components/                    colocated client widgets for the above
+      layout.tsx                      server auth gate + persistent sidebar shell
+      page.tsx                        chat home — new conversation (the front door)
+      c/[conversationId]/             one conversation, rehydrated server-side
+      projects/  runs/  files/  history/  settings/
+      _components/                    sidebar, conversation row, sign-out
       projects/[projectId]/
         page.tsx                      geometry versions + simulation list
         simulate/page.tsx             load-case editor → POST simulation
         simulations/[simulationId]/   poll job, render results + WebGL viewer
-  components/     webgl-stress-viewer, geometry-preview, error-boundary, skeleton, ui/{button,input}
-  lib/            api-client.ts, server-api.ts, auth-context.tsx, format.ts, system.ts
-  types/api.ts    hand-written mirrors of the backend Pydantic schemas
+  components/     chat/{chat-view,composer,catia-chip,attach-pill}, mesh-orb, markdown-message,
+                  agent-step-list, catia/{device-manager}, catia-bridge-panel,
+                  webgl-stress-viewer, geometry-preview, error-boundary, skeleton,
+                  ui/{button,input,pill,page-shell,icons}
+  hooks/          use-agent-chat.ts, use-catia-status.ts
+  lib/            api-client.ts, server-api.ts, auth-context.tsx, agent-stream.ts,
+                  catia-events.ts, markdown.ts, conversation-{groups,transcript,events}.ts,
+                  format.ts, system.ts
+  types/          api.ts, conversation.ts, catia.ts — hand-written mirrors of the
+                  backend Pydantic schemas
 ```
+
+**The chat is the product.** `/dashboard` is a new conversation;
+`/dashboard/c/[conversationId]` is an existing one and **the id lives in the URL** — it used
+to live in an in-memory ref, so a refresh orphaned a conversation the server had kept in
+full. When a new conversation's `start` event arrives mid-stream the id is written with
+`window.history.replaceState` (supported by Next; `router.replace` would re-render the route
+and cut the stream). The project/run/results pages are still there, one click away in the
+sidebar.
+
+**Each conversation owns at most one CATIA document**, and the sidebar's `.k-conv-dot` says
+which ones do. The bridge daemon dials **out** from the Windows box to the backend — there is
+no localhost port, and the browser never talks to it. `GET /catia/status` +
+`GET /catia/events` (SSE) are the only truth; see `../Kryova-backend/docs/CATIA_BRIDGE_PROTOCOL.md`.
 
 **`src/proxy.ts` is this repo's middleware** — Next 16 renamed `middleware.ts` to `proxy.ts`
 (export `proxy(request)` + `config.matcher`). It cookie-gates `/dashboard/*` and bounces
 signed-in users off `/login`|`/register`. Grepping for `middleware.ts` finds nothing.
 
 **Server Components fetch; only interactive leaves are `"use client"`.** Both root layouts,
-`(auth)/layout.tsx`, `dashboard/layout.tsx` and `dashboard/page.tsx` are async Server
+`(auth)/layout.tsx`, `dashboard/layout.tsx` and every `dashboard/*` page are async Server
 Components (`export const dynamic = "force-dynamic"`); client widgets are colocated in
 `app/<route>/_components/`. The deeper `projects/[projectId]/**` pages are still client-side.
+`dashboard/layout.tsx` renders the sidebar edge-to-edge and does **not** impose a max-width —
+that is `components/ui/page-shell.tsx`, which every non-chat page wraps itself in.
 
 **Two backend callers, by design** — never `fetch` the backend anywhere else:
 `lib/api-client.ts` (browser: `credentials: "include"`, `x-csrf-token` from cookie, one auto
@@ -115,9 +139,35 @@ actually shipped, so they are the ones to check for in review.
 - **Success-path polling is a flat 1500 ms with no overall ceiling**
   (`simulations/[simulationId]/page.tsx`). The backoff applies only to *errors* (3 strikes then
   give up); a job stuck in RUNNING polls forever.
-- **`types/api.ts` is hand-maintained and nothing verifies it** — see Architecture above.
+- **`types/api.ts` (and `conversation.ts`, `catia.ts`) are hand-maintained and nothing
+  verifies them** — see Architecture above.
+- **The markdown renderer is a deliberate subset** (`lib/markdown.ts`): bold, inline/fenced
+  code, lists, links, h1–h3. `_underscore_` emphasis is unsupported **on purpose** — this
+  product's vocabulary is `max_von_mises_mpa`, and a correct CommonMark parser italicises the
+  middle of it.
 
 **Fixed — do not "fix" again:**
+
+- ~~The conversation id lives in an in-memory ref, so a refresh or a nav click destroys a
+  conversation the backend has fully persisted~~ → the id is a route param; the transcript is
+  rehydrated server-side by `lib/conversation-transcript.ts`.
+- ~~The CATIA client polls `http://localhost:9100`, which nothing has ever served, and its
+  reconnect only fires when an EventSource already exists in CLOSED state~~ → rewritten
+  against `GET /catia/status` and `GET /catia/events` with unconditional backoff retry
+  (`hooks/use-catia-status.ts`, `lib/catia-events.ts`).
+- ~~`lib/query-provider.tsx` is a no-op passthrough left so `layout.tsx` compiles~~ → deleted;
+  the root layout now wires the three fonts (`--font-display-src`/`--font-sans-src`/
+  `--font-mono-src`, which `globals.css` reads — do not rename them to the token names, that
+  is a circular reference that resolves to nothing).
+- ~~The composer is a single-line `<input>` that checks `shiftKey` on Enter for a newline it
+  cannot hold, and disables itself while the agent runs~~ → a growing `<textarea>` that stays
+  editable during a run (only *sending* waits).
+- ~~Assistant messages render as raw `whitespace-pre-wrap`~~ → `components/markdown-message.tsx`,
+  which builds React elements from a parsed tree. There is no `dangerouslySetInnerHTML` in
+  `src/`; keep it that way.
+- ~~`?next=` on the login page is dead~~ → `safeRedirectPath(searchParams.get("next"))`. The
+  form sits behind a `<Suspense>` boundary because `useSearchParams` would otherwise fail the
+  build on this prerendered page.
 
 - ~~`lib/auth-context.tsx` never clears `loading`, so a signed-out visitor to `/dashboard` sees
   an infinite spinner~~ → the whole effect is gone; auth is cookie-based, the context exposes a
@@ -154,10 +204,11 @@ actually shipped, so they are the ones to check for in review.
 ## Testing
 
 - vitest + jsdom, setup in `src/test/setup.ts`, config in `vitest.config.ts`
-- **All 21 tests live in `src/lib/`** — `api-client`, `format`, `system`. There are **zero**
-  component tests, zero page tests and no e2e. Both the mass bug and the auth spinner bug listed
-  under landmines shipped and were caught by hand, not by a test; one render test each would
-  have caught them. Component tests remain the highest-value testing work in this repo.
+- 167 tests across `src/lib/`, `src/components/` and `src/hooks/`. Component tests exist now
+  (`agent-step-list`, `error-boundary`, `markdown-message`, `chat/composer`, `chat/chat-view`)
+  and are the pattern to copy; there is still **no e2e**. The pure logic behind the chat lives
+  in `lib/` on purpose — grouping, transcript rehydration, markdown — so it is testable without
+  a stream.
 - `npm run lint` reports 1 warning in `.remember/tmp/last-ndc.ts` — the Remember plugin's
   scratch dir, not source. `eslint.config.mjs` replaces `eslint-config-next`'s default ignores
   and doesn't re-add dotdirs. Not your code; the bar is still zero **errors**.
@@ -169,8 +220,11 @@ actually shipped, so they are the ones to check for in review.
 - Don't `fetch` the backend outside `lib/api-client.ts` (browser) or `lib/server-api.ts` (server)
 - Don't scale, round, or unit-convert a physics value between the API and the screen
 - Don't add a dependency without checking whether the hand-rolled equivalent should be extended
-- Don't assume a client context — both root layouts, `dashboard/layout.tsx` and
-  `dashboard/page.tsx` are Server Components; `projects/[projectId]/**` is still client-side
+- Don't assume a client context — both root layouts and every `dashboard/*` page are Server
+  Components; `projects/[projectId]/**` is still client-side
+- Don't `router.refresh()` or `router.replace()` from the chat view while a turn is streaming —
+  it re-renders the route and cuts the stream (`lib/conversation-events.ts` is why the sidebar
+  can refresh without it)
 - Don't treat `proxy.ts` or a client redirect as access control; the backend is the only real
   guard (it returns 404, not 403, for another user's resource)
 - Don't put an auth token in `localStorage` — auth is httpOnly cookies + CSRF header
