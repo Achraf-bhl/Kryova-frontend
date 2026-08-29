@@ -85,7 +85,12 @@ export function Composer({
           }
         }}
         placeholder={placeholder}
-        className="k-scroll block max-h-[13.5rem] w-full resize-none bg-transparent px-1 text-[0.9375rem] leading-6 text-accent outline-none placeholder:text-faint"
+        // `max-h-54` is 54 x 0.25rem = 13.5rem = 216px, which must stay equal to
+        // MAX_HEIGHT_PX above: the JS caps the inline height it sets while
+        // growing, and this caps the box if JS has not run yet (first paint,
+        // hydration). If the two drift, the textarea either clips its own text
+        // or grows past the cap for one frame.
+        className="k-scroll block max-h-54 w-full resize-none bg-transparent px-1 text-[0.9375rem] leading-6 text-accent outline-none placeholder:text-faint"
       />
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
