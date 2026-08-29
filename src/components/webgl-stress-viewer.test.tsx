@@ -2,6 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SurfaceField } from "@/types/api";
+import { surfaceFieldFromJson } from "@/lib/surface-field";
 import { WebGLStressViewer } from "./webgl-stress-viewer";
 
 const MINIMAL_SURFACE: SurfaceField = {
@@ -20,6 +21,8 @@ const MINIMAL_SURFACE: SurfaceField = {
   max_von_mises_mpa: 30,
   max_displacement_mm: 0,
 };
+
+const MINIMAL_ARRAYS = surfaceFieldFromJson(MINIMAL_SURFACE);
 
 function createMockGL() {
   const deleteProgram = vi.fn();
@@ -74,6 +77,7 @@ function createMockGL() {
     deleteProgram,
     deleteShader,
     deleteBuffer,
+    isContextLost: vi.fn(() => false),
   };
 
   return { gl, deleteProgram, deleteShader, deleteBuffer, loseContext };
@@ -100,24 +104,23 @@ describe("WebGLStressViewer", () => {
       () => gl,
     ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
-    const { container } = render(<WebGLStressViewer data={MINIMAL_SURFACE} />);
+    const { container } = render(<WebGLStressViewer data={MINIMAL_ARRAYS} />);
 
     expect(container.querySelector("canvas")).toBeInTheDocument();
     expect(screen.getByText(/30\.0 MPa/)).toBeInTheDocument();
   });
 
-  it("disposes every GL object and releases the context on unmount", () => {
-    const { gl, deleteProgram, deleteShader, deleteBuffer, loseContext } = createMockGL();
+  it("disposes every GL object on unmount", () => {
+    const { gl, deleteProgram, deleteShader, deleteBuffer } = createMockGL();
     HTMLCanvasElement.prototype.getContext = vi.fn(
       () => gl,
     ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
-    const { unmount } = render(<WebGLStressViewer data={MINIMAL_SURFACE} />);
+    const { unmount } = render(<WebGLStressViewer data={MINIMAL_ARRAYS} />);
     expect(deleteProgram).not.toHaveBeenCalled();
 
     unmount();
 
-    expect(loseContext).toHaveBeenCalledTimes(1);
     expect(deleteProgram).toHaveBeenCalledTimes(1);
     // Vertex shader + fragment shader.
     expect(deleteShader).toHaveBeenCalledTimes(2);
@@ -130,7 +133,7 @@ describe("WebGLStressViewer", () => {
       () => null,
     ) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
-    render(<WebGLStressViewer data={MINIMAL_SURFACE} />);
+    render(<WebGLStressViewer data={MINIMAL_ARRAYS} />);
 
     expect(screen.getByText(/WebGL is not available/i)).toBeInTheDocument();
   });

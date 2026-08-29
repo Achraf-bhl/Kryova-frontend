@@ -272,7 +272,7 @@ export function WebGLStressViewer({ data }: Props) {
       let disposed = false;
 
       function draw() {
-        if (!canvas || !gl || disposed || gl.isContextLost()) return;
+        if (!canvas || !gl || disposed || gl.isContextLost?.()) return;
         const ratio = typeof devicePixelRatio === "number" ? devicePixelRatio : 1;
         const width = Math.max(1, Math.round(cssWidth * ratio));
         const height = Math.max(1, Math.round(cssHeight * ratio));
@@ -330,7 +330,7 @@ export function WebGLStressViewer({ data }: Props) {
       // every time, so bufferSubData reuses the existing allocation and the
       // program, shaders, stress buffer and index buffer are all left alone.
       refreshGeometryRef.current = (scale: number) => {
-        if (disposed || gl.isContextLost()) return;
+        if (disposed || gl.isContextLost?.()) return;
         const next = computeGeometry(scale);
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.displaced);
@@ -492,7 +492,7 @@ export function WebGLStressViewer({ data }: Props) {
             background: "linear-gradient(to right, #1a33e6, #00cc33, #ffff00, #f22619)",
           }}
         />
-        <span>{data.maxVonMisesMpa.toFixed(1)} MPa</span>
+        <span>{(data?.maxVonMisesMpa ?? 0).toFixed(1)} MPa</span>
       </div>
     </div>
   );
