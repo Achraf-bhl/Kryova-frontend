@@ -189,19 +189,21 @@ fn start_frontend() -> Option<Child> {
 
 /// The CATIA bridge daemon, from the backend checkout.
 ///
-/// Without this the assistant has no CATIA vocabulary at all: the design tools
-/// (`catia_sketch_rectangle`, `catia_pad`, `catia_hole` …) are dispatched to a
-/// paired daemon over a WebSocket, and `catia_available` is false until one is
-/// connected. On a single-machine install there was nothing to start it, so the
-/// agent was permanently told CATIA was unavailable and fell back to asking the
-/// user to upload a STEP file — the opposite of the product.
+/// Kept for a workstation paired by hand, which is the only case this still
+/// covers. The backend supervises its own daemon now (`app/catia/local_bridge.py`):
+/// it provisions the device, mints the token and spawns the process on demand,
+/// because starting one here could not work until somebody had run
+/// `kryova-catia-bridge pair` — and on a single-machine install nobody ever
+/// does, so the agent was permanently told CATIA was unavailable and fell back
+/// to asking the user to upload a STEP file, the opposite of the product.
 ///
 /// `--wait-for-catia` matters here. Kryova is normally up before CATIA is, and
 /// without it the daemon would exit within seconds of login and never come
 /// back. Waiting means the bridge attaches by itself whenever CATIA appears,
 /// whether the engineer opened it or the assistant did.
 ///
-/// Exits immediately and harmlessly if the workstation has never been paired.
+/// Exits immediately and harmlessly if the workstation has never been paired,
+/// which is now the ordinary case: the backend's own daemon takes over.
 fn start_bridge() -> Option<Child> {
     let dir = backend_dir()?;
     let scripts = dir.join("scripts");
