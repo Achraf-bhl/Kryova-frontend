@@ -117,6 +117,10 @@ export function ChatView({
   } = useAgentChat({
     conversationId,
     initialTurns,
+    // Passed through so a project this hook creates for a brand-new
+    // conversation (or one already known from the URL) is used on every turn,
+    // not just the first -- see useAgentChat's own project-creation guard.
+    projectId: project ?? undefined,
     defaultAllowMutations: true,
     onConversationStarted,
     onProjectCreated: setProject,

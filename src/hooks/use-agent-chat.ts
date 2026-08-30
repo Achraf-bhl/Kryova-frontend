@@ -3,8 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { StepView } from "@/components/agent-step-list";
+import { api } from "@/lib/api-client";
 import type { Turn } from "@/lib/conversation-transcript";
 import { streamAgent, type AgentEvent } from "@/lib/agent-stream";
+
+/** What an auto-created project is named before the agent gets a chance to
+ * rename it to something that fits what the user actually asked for. */
+const UNTITLED_PROJECT_NAME = "New project";
 
 export type { Turn };
 
@@ -232,6 +237,30 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
       updateSteps(() => []);
       setBusy(true);
 
+      // The first message of a brand-new conversation (no conversation id
+      // minted yet, no project already scoped to it) gets an empty project
+      // created up front, rather than leaving the model to call its own
+      // create_project tool mid-turn. It still renames it -- see
+      // _PROJECT_BOOTSTRAP -- so this only saves the round trip where a
+      // conversation would otherwise run project-less. A conversation that is
+      // being resumed (conversationIdRef already set) never goes through this:
+      // it already has whatever project it has.
+      let effectiveProjectId = projectId ?? null;
+      if (!effectiveProjectId && !conversationIdRef.current) {
+        try {
+          const created = await api.createProject({ name: UNTITLED_PROJECT_NAME });
+          effectiveProjectId = created.id;
+          if (reportedProjectRef.current !== created.id) {
+            reportedProjectRef.current = created.id;
+            onProjectCreatedRef.current?.(created.id);
+          }
+        } catch {
+          // No project this turn is the status quo this replaces -- fall back
+          // to it rather than blocking the message on a project the agent can
+          // still create itself.
+        }
+      }
+
       const controller = new AbortController();
       abortRef.current = controller;
       try {
@@ -239,7 +268,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
           {
             message,
             conversation_id: conversationIdRef.current,
-            project_id: projectId ?? null,
+            project_id: effectiveProjectId,
             allow_mutations: allowMutations,
           },
           handleEvent,

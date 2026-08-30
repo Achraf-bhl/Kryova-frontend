@@ -1,6 +1,6 @@
 [package]
 name = "kryova"
-version = "0.1.1"
+version = "0.1.2"
 description = "AI-native CAD + FEA"
 authors = ["Kryova"]
 edition = "2021"
