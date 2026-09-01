@@ -1,17 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 
 import { AgentStepList } from "@/components/agent-step-list";
 import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { Composer } from "@/components/chat/composer";
+import { CopyButton } from "@/components/chat/copy-button";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { MeshOrb } from "@/components/mesh-orb";
 import { PartIcon } from "@/components/ui/icons";
 import { useAgentChat } from "@/hooks/use-agent-chat";
 import { useCatiaStatus } from "@/hooks/use-catia-status";
+import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { notifyConversationsChanged } from "@/lib/conversation-events";
 import type { Turn } from "@/lib/conversation-transcript";
 import { toPlainText } from "@/lib/markdown";
@@ -88,7 +90,6 @@ export function ChatView({
 }: ChatViewProps) {
   const [input, setInput] = useState("");
   const [project, setProject] = useState<string | null>(projectId);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const onConversationStarted = useCallback((id: string) => {
     // The id goes in the URL the moment the backend mints it, so a refresh — or
@@ -140,17 +141,14 @@ export function ChatView({
 
   const empty = turns.length === 0 && liveSteps.length === 0 && !busy;
 
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    // `scrollTo` is missing in jsdom and in some embedded webviews; assigning
-    // `scrollTop` is the universally available equivalent, minus the easing.
-    if (typeof element.scrollTo === "function") {
-      element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
-    } else {
-      element.scrollTop = element.scrollHeight;
-    }
-  }, [turns, liveSteps, narration, busy]);
+  // Follows the newest content, but yields to a reader who has scrolled up —
+  // during a long turn the old unconditional scroll fired on every tool event
+  // and made reading back impossible. See `useStickToBottom`.
+  const {
+    ref: scrollRef,
+    pinned,
+    scrollToBottom,
+  } = useStickToBottom([turns, liveSteps, narration, busy]);
 
   const submit = useCallback(() => {
     const message = input.trim();
@@ -195,9 +193,10 @@ export function ChatView({
         </header>
       )}
 
+      <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
-        className={`k-scroll min-h-0 flex-1 overflow-y-auto px-4 sm:px-6 ${
+        className={`k-scroll h-full overflow-y-auto px-4 sm:px-6 ${
           empty ? "flex flex-col items-center justify-end pb-6" : "py-6"
         }`}
       >
@@ -231,9 +230,19 @@ export function ChatView({
                   {turn.content}
                 </p>
               ) : (
-                <div key={turn.id} className="max-w-[95%] space-y-3">
+                <div key={turn.id} className="group max-w-[95%] space-y-3">
                   {turn.steps && turn.steps.length > 0 && <AgentStepList steps={turn.steps} />}
-                  {turn.content && <MarkdownMessage content={turn.content} />}
+                  {turn.content && (
+                    <>
+                      <MarkdownMessage content={turn.content} />
+                      {/* Revealed on hover or keyboard focus. Always in the DOM
+                          so it is reachable by tab and by a screen reader —
+                          `opacity` hides it from sight, not from the a11y tree. */}
+                      <div className="opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                        <CopyButton content={turn.content} />
+                      </div>
+                    </>
+                  )}
                   {turn.truncated && (
                     <p className="text-xs text-warning">
                       The agent ran out of steps for that turn. Ask for one thing at a time and it
@@ -263,6 +272,32 @@ export function ChatView({
             )}
             {narration && <p className="text-sm italic text-muted">{narration}</p>}
           </div>
+        )}
+      </div>
+
+        {/* Only while there is something below to go back to. On the empty
+            state there is no transcript, and during a settled conversation a
+            pinned view is already showing the newest turn. */}
+        {!pinned && !empty && (
+          <button
+            type="button"
+            onClick={scrollToBottom}
+            className="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-medium text-muted shadow-raised transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              className="size-3.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.75"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 3v10M4 9.5 8 13.5l4-4" />
+            </svg>
+            {busy ? "Jump to what it's doing" : "Jump to latest"}
+          </button>
         )}
       </div>
 

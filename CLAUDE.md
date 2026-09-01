@@ -133,6 +133,8 @@ actually shipped, so they are the ones to check for in review.
 
 **Still live:**
 
+- **The chat transcript is not virtualised.** Every turn of every length renders. Fine at the
+  session lengths seen so far; it is the next thing to hurt on a very long conversation.
 - **`scaleFactor` is in the WebGL viewer's effect deps** — every slider tick tears down and
   rebuilds the program, shaders and all four buffers. Cleanup deletes them now (no leak), but
   the rebuild is waste: only the displaced-position buffer depends on `scaleFactor`.
@@ -165,6 +167,12 @@ actually shipped, so they are the ones to check for in review.
 - ~~Assistant messages render as raw `whitespace-pre-wrap`~~ → `components/markdown-message.tsx`,
   which builds React elements from a parsed tree. There is no `dangerouslySetInnerHTML` in
   `src/`; keep it that way.
+- ~~The transcript scrolls to the bottom on every streamed event, so a reader who scrolls up
+  during a long turn is dragged back down within a second, repeatedly~~ → `useStickToBottom`
+  (`hooks/use-stick-to-bottom.ts`): auto-scroll only while already at the bottom, plus a
+  "jump to latest" pill. It takes a **callback ref**, not a `RefObject`, on purpose —
+  assigning `ref.current` does not re-run effects, so a listener bound with stable deps binds
+  once against `null` and the hook silently degrades to the behaviour it replaces.
 - ~~`?next=` on the login page is dead~~ → `safeRedirectPath(searchParams.get("next"))`. The
   form sits behind a `<Suspense>` boundary because `useSearchParams` would otherwise fail the
   build on this prerendered page.
