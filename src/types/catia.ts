@@ -40,6 +40,16 @@ export interface CatiaStatusOnline {
   /** True when the daemon is running its no-CATIA simulator. */
   mock: boolean;
   capabilities: string[];
+  /**
+   * Which language CATIA's own interface is running in on that workstation, as
+   * a two-letter code, or `""` when the daemon could not tell.
+   *
+   * Not the user's language and not a Kryova setting: it is chosen when CATIA
+   * is installed, and the bridge is the only thing that can see it. Empty is
+   * normal, not an error — the assistant then names commands in English and
+   * reads the seat's real labels off its live menus.
+   */
+  ui_language: string;
   queue_depth: number;
   connected_since: string;
 }

@@ -38,6 +38,7 @@ const online: CatiaStatus = {
   bridge_version: "1.0.0",
   mock: false,
   capabilities: ["part"],
+  ui_language: "de",
   queue_depth: 0,
   connected_since: "2026-08-29T08:00:00Z",
 };
