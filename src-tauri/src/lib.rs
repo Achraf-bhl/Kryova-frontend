@@ -187,45 +187,27 @@ fn start_frontend() -> Option<Child> {
     spawn(command, "frontend")
 }
 
-/// The CATIA bridge daemon, from the backend checkout.
-///
-/// Kept for a workstation paired by hand, which is the only case this still
-/// covers. The backend supervises its own daemon now (`app/catia/local_bridge.py`):
-/// it provisions the device, mints the token and spawns the process on demand,
-/// because starting one here could not work until somebody had run
-/// `kryova-catia-bridge pair` — and on a single-machine install nobody ever
-/// does, so the agent was permanently told CATIA was unavailable and fell back
-/// to asking the user to upload a STEP file, the opposite of the product.
-///
-/// `--wait-for-catia` matters here. Kryova is normally up before CATIA is, and
-/// without it the daemon would exit within seconds of login and never come
-/// back. Waiting means the bridge attaches by itself whenever CATIA appears,
-/// whether the engineer opened it or the assistant did.
-///
-/// Exits immediately and harmlessly if the workstation has never been paired,
-/// which is now the ordinary case: the backend's own daemon takes over.
-fn start_bridge() -> Option<Child> {
-    let dir = backend_dir()?;
-    let scripts = dir.join("scripts");
-    if !scripts.join("catia_bridge").is_dir() {
-        return None;
-    }
-    let venv_python = dir.join("venv").join("Scripts").join("python.exe");
-    let python = if venv_python.is_file() {
-        venv_python
-    } else {
-        PathBuf::from("python")
-    };
-
-    let mut command = Command::new(python);
-    command
-        .current_dir(&scripts)
-        .arg("-m")
-        .arg("catia_bridge")
-        .arg("run")
-        .arg("--wait-for-catia");
-    spawn(command, "catia-bridge")
-}
+// The CATIA bridge daemon is deliberately NOT started here.
+//
+// It used to be, unconditionally, and that is now actively harmful. The
+// backend supervises its own daemon (`app/catia/local_bridge.py`): it
+// provisions the device row, derives the token and spawns the process on
+// demand, for whichever account is signed in. Only one daemon may run per
+// machine — `catia_bridge/config.py` holds an exclusive lock on
+// `bridge.lock` — so a second one started here can only take that lock away
+// from the supervised one.
+//
+// On a machine nobody ever ran `kryova-catia-bridge pair` on, the daemon
+// started here exits immediately (no stored credential, and it loads the
+// config before touching the lock), so it was merely a wasted process per
+// launch. On a hand-paired machine it wins the lock, the backend's own
+// daemon then dies with "already running", and the backend reports the
+// bridge as unavailable — then sits out its retry cooldown before trying
+// again. That is precisely the "no CATIA bridge is connected" the whole
+// local-bridge mechanism exists to prevent, reintroduced by the launcher.
+//
+// A hand-paired workstation is still supported: the backend spawns that
+// daemon too, with `--wait-for-catia`, so nothing here is lost.
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -246,12 +228,9 @@ pub fn run() {
                         children.push(child);
                     }
                 }
-                // No port to probe for this one: the bridge dials out and
-                // listens on nothing. It is started unconditionally and, like
-                // the servers above, killed on exit.
-                if let Some(child) = start_bridge() {
-                    children.push(child);
-                }
+                // No CATIA bridge is started here on purpose -- the backend
+                // owns that daemon. See the note above `start_backend`'s
+                // neighbours.
             }
 
             // The window is configured hidden: wait off the main thread so the
