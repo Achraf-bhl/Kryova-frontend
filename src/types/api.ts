@@ -43,6 +43,13 @@ export interface Material {
   density_kg_m3: number;
 }
 
+/**
+ * How a load or restraint names the region it applies to.
+ *
+ * Mirrors `app/solve/types.py`. Every variant resolves server-side to a set of
+ * mesh nodes; what differs is how the region is described to someone who cannot
+ * see the mesh.
+ */
 export type Selector =
   | {
       type: "face";
@@ -54,19 +61,102 @@ export type Selector =
       type: "box";
       min: [number, number, number];
       max: [number, number, number];
+    }
+  | {
+      /** The wall of a hole or a shaft seat -- what a bolt hole actually is. */
+      type: "cylinder";
+      axis_point: [number, number, number];
+      axis_direction: [number, number, number];
+      radius: number;
+      radius_tolerance?: number;
+      length?: number | null;
+    }
+  | {
+      type: "sphere";
+      centre: [number, number, number];
+      radius: number;
+    }
+  | {
+      /** Every node. Only meaningful for the body loads: gravity, centrifugal. */
+      type: "body";
     };
+
+export type SelectorType = Selector["type"];
+
+/** Named restraint patterns. `custom` means "use `dofs` as given". */
+export type FixtureKind = "clamp" | "roller" | "slider" | "symmetry" | "custom";
 
 export interface Fixture {
   where: Selector;
-  dofs: Array<"x" | "y" | "z">;
+  /**
+   * Which translations are held. Omit when `kind` is not `custom` -- the server
+   * derives it, and a value that disagrees with `kind` is refused.
+   */
+  dofs?: Array<"x" | "y" | "z">;
+  kind?: FixtureKind;
+  /** The axis a roller, slider or symmetry restraint is normal to. */
+  normal?: "x" | "y" | "z";
   name?: string;
 }
 
-export interface Load {
-  where: Selector;
-  force_n: [number, number, number];
-  name?: string;
-}
+/**
+ * The load types the solver understands.
+ *
+ * `type` is required on every new load. The server still accepts a load with no
+ * `type` and reads it as a force -- that is what keeps simulations saved before
+ * this union existed re-solving to the same answer -- but nothing here should
+ * rely on it.
+ */
+export type Load =
+  | {
+      type: "force";
+      where: Selector;
+      /** Total force in newtons, spread over the region by tributary area. */
+      force_n: [number, number, number];
+      name?: string;
+    }
+  | {
+      type: "pressure";
+      where: Selector;
+      /** MPa along the surface's own normal. Positive pushes inward. */
+      pressure_mpa: number;
+      name?: string;
+    }
+  | {
+      type: "moment";
+      where: Selector;
+      /** N-mm about an axis through the region's centroid. */
+      moment_n_mm: [number, number, number];
+      name?: string;
+    }
+  | {
+      /** A pin bearing on a bore. Needs a cylinder selector. */
+      type: "bearing";
+      where: Selector;
+      force_n: [number, number, number];
+      /** Cosine exponent; 1.0 is the classical distribution. */
+      distribution?: number;
+      name?: string;
+    }
+  | {
+      type: "gravity";
+      direction?: [number, number, number];
+      /** mm/s^2. Defaults to standard gravity, 9806.65. */
+      magnitude_mm_s2?: number;
+      name?: string;
+    }
+  | {
+      type: "centrifugal";
+      axis_point: [number, number, number];
+      axis_direction: [number, number, number];
+      rpm: number;
+      name?: string;
+    };
+
+export type LoadType = Load["type"];
+
+/** Standard gravity in mm/s^2, matching `STANDARD_GRAVITY_MM_S2` server-side. */
+export const STANDARD_GRAVITY_MM_S2 = 9806.65;
 
 export interface LoadCasePayload {
   name: string;
@@ -134,6 +224,15 @@ export interface SimulationCreate {
   geometry_version?: number | null;
   load_case: LoadCasePayload;
   element_size_mm?: number | null;
+  /**
+   * 1 for linear tets, 2 for quadratic (tet10).
+   *
+   * The server has accepted this since tet10 landed; this file did not declare
+   * it, so the UI had no way to ask for quadratic elements and every job ran
+   * linear -- which is markedly too stiff in bending. Mirrors
+   * `app/schemas/simulation.py`.
+   */
+  element_order?: 1 | 2;
 }
 
 export interface StaticResult {
