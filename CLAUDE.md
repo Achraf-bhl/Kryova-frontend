@@ -28,7 +28,7 @@ pnpm/npm install       (npm is what the lockfile tracks — package-lock.json)
 npm run dev            dev server
 npm run build          production build
 npm start              serve the build
-npm run test           vitest run  (167 tests, ~4s)
+npm run test           vitest run  (237 tests, ~7s)
 npm run lint           eslint
 npx tsc --noEmit       typecheck
 npm run setup          scripts/setup.mjs — checks Node, installs, writes .env.local, builds
@@ -57,13 +57,14 @@ src/
         page.tsx                      geometry versions + simulation list
         simulate/page.tsx             load-case editor → POST simulation
         simulations/[simulationId]/   poll job, render results + WebGL viewer
-  components/     chat/{chat-view,composer,catia-chip,attach-pill}, mesh-orb, markdown-message,
-                  agent-step-list, catia/{device-manager}, catia-bridge-panel,
+  components/     chat/{chat-view,composer,catia-chip,attach-pill,resume-notice}, mesh-orb,
+                  markdown-message, agent-step-list, catia/{device-manager}, catia-bridge-panel,
                   webgl-stress-viewer, geometry-preview, error-boundary, skeleton,
                   ui/{button,input,pill,page-shell,icons}
   hooks/          use-agent-chat.ts, use-catia-status.ts
   lib/            api-client.ts, server-api.ts, auth-context.tsx, agent-stream.ts,
-                  catia-events.ts, markdown.ts, conversation-{groups,transcript,events}.ts,
+                  catia-events.ts, markdown.ts,
+                  conversation-{groups,transcript,events,resume}.ts,
                   format.ts, system.ts
   types/          api.ts, conversation.ts, catia.ts — hand-written mirrors of the
                   backend Pydantic schemas
@@ -81,6 +82,18 @@ sidebar.
 which ones do. The bridge daemon dials **out** from the Windows box to the backend — there is
 no localhost port, and the browser never talks to it. `GET /catia/status` +
 `GET /catia/events` (SSE) are the only truth; see `../Kryova-backend/docs/CATIA_BRIDGE_PROTOCOL.md`.
+
+**Reopening a conversation shows where the work got to, not just what was said.**
+`GET /ai/conversations/{id}` carries a `resume` block — operations run, when the last one was,
+and any CATIA step whose most recent attempt failed — read from the backend's log of the calls,
+which is the *same source* the agent's own state block reads. That is the point: the human and
+the model come back to one account of the session rather than two. The display rule lives in
+`lib/conversation-resume.ts` (pure, tested) and is deliberately restrained — nothing renders
+unless real time has passed or something was left broken, because a banner on every
+conversation is furniture. `components/chat/resume-notice.tsx` renders it at the head of the
+transcript. It is client-only via `useSyncExternalStore` for the same reason the greeting is:
+"picked up 3 days later" is measured against the reader's clock, and a server rendering it
+would disagree at every unit boundary.
 
 **`src/proxy.ts` is this repo's middleware** — Next 16 renamed `middleware.ts` to `proxy.ts`
 (export `proxy(request)` + `config.matcher`). It cookie-gates `/dashboard/*` and bounces
@@ -212,7 +225,7 @@ actually shipped, so they are the ones to check for in review.
 ## Testing
 
 - vitest + jsdom, setup in `src/test/setup.ts`, config in `vitest.config.ts`
-- 167 tests across `src/lib/`, `src/components/` and `src/hooks/`. Component tests exist now
+- 237 tests across `src/lib/`, `src/components/` and `src/hooks/`. Component tests exist now
   (`agent-step-list`, `error-boundary`, `markdown-message`, `chat/composer`, `chat/chat-view`)
   and are the pattern to copy; there is still **no e2e**. The pure logic behind the chat lives
   in `lib/` on purpose — grouping, transcript rehydration, markdown — so it is testable without

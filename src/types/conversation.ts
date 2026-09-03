@@ -27,6 +27,30 @@ export interface ConversationMessage {
   created_at: string;
 }
 
+/** A CATIA call whose most recent attempt in this conversation failed. */
+export interface UnfinishedOperation {
+  tool: string;
+  /** The same human label the step list uses. */
+  label: string;
+  error: string;
+  attempts: number;
+}
+
+/**
+ * What this conversation already did in CATIA.
+ *
+ * Read from the backend's own log of the calls, which is the same source the
+ * agent's state block reads. That is the point: the human returning to a
+ * conversation and the model resuming it see the identical account of where the
+ * work got to. Two different answers to "what did we do" on one screen is worse
+ * than one of them being absent.
+ */
+export interface ConversationResume {
+  operations: number;
+  last_activity_at: string | null;
+  unfinished: UnfinishedOperation[];
+}
+
 /** `GET /ai/conversations/{id}` — everything needed to rehydrate a chat. */
 export interface ConversationDetail {
   conversation_id: string;
@@ -36,6 +60,7 @@ export interface ConversationDetail {
   updated_at: string;
   has_catia_document: boolean;
   catia_document: string | null;
+  resume: ConversationResume;
   prompt_tokens: number;
   completion_tokens: number;
   messages: ConversationMessage[];

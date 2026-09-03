@@ -46,6 +46,10 @@ export default async function ConversationPage({
         title={conversation.title}
         projectId={conversation.project_id}
         boundDocument={conversation.catia_document}
+        // What was actually *done*, as opposed to what was said — read from the
+        // backend's log of the CATIA calls, which is the same source the agent
+        // reads when it resumes. One account of the session, not two.
+        resume={conversation.resume}
         initialTurns={conversationToTurns(conversation.messages)}
       />
     </div>

@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 
 import { AgentStepList } from "@/components/agent-step-list";
 import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { Composer } from "@/components/chat/composer";
 import { CopyButton } from "@/components/chat/copy-button";
+import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { MeshOrb } from "@/components/mesh-orb";
 import { PartIcon } from "@/components/ui/icons";
@@ -15,8 +16,10 @@ import { useAgentChat } from "@/hooks/use-agent-chat";
 import { useCatiaStatus } from "@/hooks/use-catia-status";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { notifyConversationsChanged } from "@/lib/conversation-events";
+import { resumeNotice } from "@/lib/conversation-resume";
 import type { Turn } from "@/lib/conversation-transcript";
 import { toPlainText } from "@/lib/markdown";
+import type { ConversationResume } from "@/types/conversation";
 
 /**
  * Openers written the way an engineer would actually start.
@@ -62,6 +65,22 @@ function getServerGreeting(): string | null {
   return null;
 }
 
+/**
+ * Whether this is running in the browser, as a store snapshot.
+ *
+ * Two booleans rather than the notice itself, because `getSnapshot` has to
+ * return a cached value: `resumeNotice` builds a fresh object each call, and
+ * returning that here makes React re-render forever looking for it to settle.
+ * The notice is derived from this behind a `useMemo`.
+ */
+function getMounted(): boolean {
+  return true;
+}
+
+function getServerMounted(): boolean {
+  return false;
+}
+
 function firstNameOf(fullName: string | null, email: string): string {
   const trimmed = fullName?.trim();
   if (trimmed) return trimmed.split(/\s+/)[0];
@@ -77,6 +96,11 @@ export interface ChatViewProps {
   initialTurns?: Turn[];
   projectId?: string | null;
   boundDocument?: string | null;
+  /**
+   * What this conversation already did in CATIA, from the server. Absent on the
+   * chat home, where there is no history to have.
+   */
+  resume?: ConversationResume | null;
 }
 
 export function ChatView({
@@ -87,6 +111,7 @@ export function ChatView({
   initialTurns,
   projectId = null,
   boundDocument = null,
+  resume = null,
 }: ChatViewProps) {
   const [input, setInput] = useState("");
   const [project, setProject] = useState<string | null>(projectId);
@@ -138,6 +163,14 @@ export function ChatView({
   // server snapshot (nothing), then the client one, with no hydration mismatch
   // and no state-setting effect.
   const greeting = useSyncExternalStore(subscribeNever, getGreeting, getServerGreeting);
+
+  // "Picked up 3 days later" is measured against the reader's clock, so it is
+  // client-only for the same reason the greeting is — a server rendering it
+  // would be rendering someone else's idea of now, and the two would disagree
+  // at every unit boundary. Recomputed only when the server's account changes,
+  // which is once per page load.
+  const mounted = useSyncExternalStore(subscribeNever, getMounted, getServerMounted);
+  const notice = useMemo(() => (mounted ? resumeNotice(resume) : null), [mounted, resume]);
 
   const empty = turns.length === 0 && liveSteps.length === 0 && !busy;
 
@@ -214,6 +247,10 @@ export function ChatView({
           </div>
         ) : (
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
+            {/* At the head of the transcript, because that is where the story
+                starts: this is what happened before anything below it. */}
+            <ResumeNotice notice={notice} />
+
             {busy && (
               <div className="flex items-center gap-2 text-xs text-muted">
                 <MeshOrb className="h-5 w-5" working density="coarse" />
