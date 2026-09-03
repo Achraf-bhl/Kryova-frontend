@@ -47,6 +47,12 @@ function Inline({ nodes }: { nodes: InlineNode[] }) {
   );
 }
 
+const ALIGN = {
+  left: "text-left",
+  right: "text-right",
+  center: "text-center",
+} as const;
+
 function Block({ block }: { block: MarkdownBlock }) {
   switch (block.type) {
     case "heading": {
@@ -81,6 +87,45 @@ function Block({ block }: { block: MarkdownBlock }) {
             </li>
           ))}
         </ul>
+      );
+    case "rule":
+      return <hr className="border-0 border-t border-border" />;
+    case "table":
+      // `overflow-x-auto` on the wrapper, not the table: an engineering
+      // comparison runs to five or six columns, and without its own scroller
+      // the widest row pushes the whole transcript sideways.
+      return (
+        <div className="k-scroll -mx-1 overflow-x-auto px-1">
+          <table className="w-full min-w-max border-collapse text-[0.875rem] tabular-nums">
+            <thead>
+              <tr className="border-b border-border">
+                {block.header.map((cell, index) => (
+                  <th
+                    key={index}
+                    scope="col"
+                    className={`px-2.5 py-1.5 font-display font-semibold text-accent ${ALIGN[block.align[index] ?? "left"]}`}
+                  >
+                    <Inline nodes={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, rowIndex) => (
+                <tr key={rowIndex} className="border-b border-border/50 last:border-0">
+                  {row.map((cell, cellIndex) => (
+                    <td
+                      key={cellIndex}
+                      className={`px-2.5 py-1.5 align-top ${ALIGN[block.align[cellIndex] ?? "left"]}`}
+                    >
+                      <Inline nodes={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     default:
       return (

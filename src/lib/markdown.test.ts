@@ -136,3 +136,116 @@ describe("toPlainText", () => {
     expect(toPlainText("")).toBe("");
   });
 });
+
+describe("tables", () => {
+  // The assistant reaches for a table unprompted whenever it compares things —
+  // workbench order, which step constrains which. Before this existed the
+  // reader got the pipes as prose, running off the side of the pane.
+  const TABLE = [
+    "| Step | Workbench | Note |",
+    "| --- | --- | --- |",
+    "| 1 | Part Design | Pad the base |",
+    "| 2 | GSA | Linear static |",
+  ].join("\n");
+
+  it("parses a pipe table into header and rows", () => {
+    const blocks = parseMarkdown(TABLE);
+    expect(blocks).toHaveLength(1);
+    const table = blocks[0];
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(table.header.map((c) => c[0])).toEqual([
+      { type: "text", value: "Step" },
+      { type: "text", value: "Workbench" },
+      { type: "text", value: "Note" },
+    ]);
+    expect(table.rows).toHaveLength(2);
+    expect(table.rows[1][1][0]).toEqual({ type: "text", value: "GSA" });
+  });
+
+  it("reads column alignment from the divider", () => {
+    const blocks = parseMarkdown("| a | b | c |\n|:--|:-:|--:|\n| 1 | 2 | 3 |");
+    const table = blocks[0];
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(table.align).toEqual(["left", "center", "right"]);
+  });
+
+  it("accepts a table without outer pipes", () => {
+    const blocks = parseMarkdown("a | b\n--- | ---\n1 | 2");
+    expect(blocks[0].type).toBe("table");
+  });
+
+  it("keeps inline formatting inside cells", () => {
+    const blocks = parseMarkdown("| x |\n| --- |\n| **bold** |");
+    // one column is not a table; it needs at least two to be worth the markup
+    expect(blocks[0].type).toBe("paragraph");
+
+    const two = parseMarkdown("| x | y |\n| --- | --- |\n| **bold** | `code` |");
+    const table = two[0];
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(table.rows[0][0][0].type).toBe("strong");
+    expect(table.rows[0][1][0]).toEqual({ type: "code", value: "code" });
+  });
+
+  it("does not treat a lone row of pipes as a table", () => {
+    // No divider under it, so it is prose that happens to contain pipes.
+    expect(parseMarkdown("the flag is a | b in the config").at(0)?.type).toBe("paragraph");
+  });
+
+  it("renders a half-arrived table rather than swallowing it", () => {
+    // This parses on every streamed chunk, so a ragged final row is normal.
+    const blocks = parseMarkdown("| a | b |\n| --- | --- |\n| 1 |");
+    const table = blocks[0];
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(table.rows[0]).toHaveLength(2);
+    expect(table.rows[0][1]).toEqual([]);
+  });
+
+  it("treats an escaped pipe as a literal, not a column break", () => {
+    // The source must carry a real backslash: "\|" in a TS string is just "|".
+    const blocks = parseMarkdown(String.raw`| a | b |` + "\n| --- | --- |\n" + String.raw`| x \| y | z |`);
+    const table = blocks[0];
+    expect(table.type).toBe("table");
+    if (table.type !== "table") return;
+    expect(table.rows[0][0][0]).toEqual({ type: "text", value: "x | y" });
+  });
+
+  it("reads a table aloud without saying 'vertical bar'", () => {
+    expect(toPlainText(TABLE)).toBe(
+      "Step, Workbench, Note. 1, Part Design, Pad the base. 2, GSA, Linear static",
+    );
+  });
+});
+
+describe("thematic breaks", () => {
+  it("renders --- as a rule, not as three dashes of prose", () => {
+    // The assistant separates sections with these constantly; one answer in the
+    // bilingual test carried four.
+    const blocks = parseMarkdown(["before", "", "---", "", "after"].join("\n"));
+
+    expect(blocks.map((b) => b.type)).toEqual(["paragraph", "rule", "paragraph"]);
+  });
+
+  it("accepts the other rule spellings", () => {
+    for (const rule of ["***", "___", "- - -", "----------"]) {
+      expect(parseMarkdown(rule).at(0)?.type).toBe("rule");
+    }
+  });
+
+  it("still reads a table divider as a table, not a rule", () => {
+    // `---` is both. The table wins when a header row sits above it.
+    const blocks = parseMarkdown(["| a | b |", "| --- | --- |", "| 1 | 2 |"].join("\n"));
+    expect(blocks.map((b) => b.type)).toEqual(["table"]);
+  });
+
+  it("does not turn a bullet into a rule", () => {
+    expect(parseMarkdown("- item one").at(0)?.type).toBe("list");
+  });
+
+  it("is silent when read aloud", () => {
+    expect(toPlainText(["one", "", "---", "", "two"].join("\n"))).toBe("one  two");
+  });
+});

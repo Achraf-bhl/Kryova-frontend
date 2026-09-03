@@ -21,11 +21,20 @@ export type InlineNode =
   | { type: "code"; value: string }
   | { type: "link"; href: string; children: InlineNode[] };
 
+export type TableAlign = "left" | "right" | "center";
+
 export type MarkdownBlock =
   | { type: "paragraph"; children: InlineNode[] }
   | { type: "heading"; level: 1 | 2 | 3; children: InlineNode[] }
   | { type: "code"; language: string | null; value: string }
-  | { type: "list"; ordered: boolean; items: InlineNode[][] };
+  | { type: "list"; ordered: boolean; items: InlineNode[][] }
+  | { type: "rule" }
+  | {
+      type: "table";
+      align: TableAlign[];
+      header: InlineNode[][];
+      rows: InlineNode[][][];
+    };
 
 /**
  * Accept only schemes that cannot execute.
@@ -169,6 +178,14 @@ export function toPlainText(source: string): string {
           return block.value;
         case "list":
           return block.items.map(inlineText).join(". ");
+        case "table":
+          // Read out row by row, cells separated by commas. A screen reader
+          // announcing the pipes would say "vertical bar" at every column.
+          return [block.header, ...block.rows]
+            .map((row) => row.map(inlineText).join(", "))
+            .join(". ");
+        case "rule":
+          return "";
         default:
           return inlineText(block.children);
       }
@@ -181,6 +198,59 @@ const HEADING = /^(#{1,3})\s+(.*)$/;
 const BULLET = /^\s{0,3}[-*+]\s+(.*)$/;
 const NUMBERED = /^\s{0,3}\d{1,9}[.)]\s+(.*)$/;
 const FENCE = /^\s{0,3}```(.*)$/;
+const RULE = /^\s{0,3}([-*_])(\s*\1){2,}\s*$/;
+
+/**
+ * The `|---|:--:|---:|` line that turns the row above it into a table header.
+ *
+ * Tables are not decoration here. Ask the assistant to compare workbenches, or
+ * which step constrains which, and it answers with one unprompted — and without
+ * this the reader got `| 3 | Part Design | Apply Draft Angle (Dépouille) |` as a
+ * paragraph, pipes and all, running off the right of the pane.
+ */
+const TABLE_DIVIDER = /^\s{0,3}\|?\s*:?-{1,}:?\s*(\|\s*:?-{1,}:?\s*)*\|?\s*$/;
+
+/**
+ * Split one table row on its pipes.
+ *
+ * The outer pipes are optional in GFM — `a | b` is as valid as `| a | b |` — so
+ * they are trimmed before splitting rather than relied on. An escaped `\|` is a
+ * literal pipe inside a cell and must not split it.
+ */
+function splitRow(line: string): string[] {
+  let text = line.trim();
+  if (text.startsWith("|")) text = text.slice(1);
+  if (text.endsWith("|") && !text.endsWith("\\|")) text = text.slice(0, -1);
+
+  const cells: string[] = [];
+  let cell = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (char === "\\" && text[i + 1] === "|") {
+      cell += "|";
+      i += 1;
+      continue;
+    }
+    if (char === "|") {
+      cells.push(cell.trim());
+      cell = "";
+      continue;
+    }
+    cell += char;
+  }
+  cells.push(cell.trim());
+  return cells;
+}
+
+function rowAlignment(divider: string): TableAlign[] {
+  return splitRow(divider).map((spec) => {
+    const left = spec.startsWith(":");
+    const right = spec.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+}
 
 /**
  * Parse a message into blocks.
@@ -219,6 +289,54 @@ export function parseMarkdown(source: string): MarkdownBlock[] {
       // mid-stream and the block still renders.
       i += 1;
       blocks.push({ type: "code", language, value: body.join("\n") });
+      continue;
+    }
+
+    // A table is recognised by its *second* line, so this looks ahead one line
+    // rather than committing on the first. A lone row of pipes with no divider
+    // under it is prose and stays prose.
+    const next = lines[i + 1];
+    if (line.includes("|") && next !== undefined && TABLE_DIVIDER.test(next)) {
+      const header = splitRow(line);
+      const align = rowAlignment(next);
+      if (header.length > 1 && align.length === header.length) {
+        flushParagraph();
+        const rows: InlineNode[][][] = [];
+        let cursor = i + 2;
+        while (
+          cursor < lines.length &&
+          lines[cursor].trim() !== "" &&
+          lines[cursor].includes("|")
+        ) {
+          const cells = splitRow(lines[cursor]);
+          // Ragged rows are normal in a half-streamed message and in output a
+          // model wrote by hand; pad or trim to the header rather than dropping
+          // the row, so the table renders while it is still arriving.
+          const padded = Array.from({ length: header.length }, (_, column) =>
+            parseInline(cells[column] ?? ""),
+          );
+          rows.push(padded);
+          cursor += 1;
+        }
+        blocks.push({
+          type: "table",
+          align,
+          header: header.map(parseInline),
+          rows,
+        });
+        i = cursor;
+        continue;
+      }
+    }
+
+    // A thematic break. Checked *after* the table, because `---` is also a
+    // table's divider row and the table branch above has already claimed it if
+    // the line before was a header. The assistant separates sections with these
+    // constantly, and without this they arrived as three literal dashes.
+    if (RULE.test(line)) {
+      flushParagraph();
+      blocks.push({ type: "rule" });
+      i += 1;
       continue;
     }
 

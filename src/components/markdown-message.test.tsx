@@ -57,4 +57,31 @@ describe("MarkdownMessage", () => {
     const { container } = render(<MarkdownMessage content="   " />);
     expect(container).toBeEmptyDOMElement();
   });
+
+  it("renders a pipe table as a real table, not as pipes in a paragraph", () => {
+    // What the assistant actually sends when asked to compare workbenches.
+    const { container } = render(
+      <MarkdownMessage
+        content={
+          ["| Step | Workbench |", "| --- | ---: |", "| 1 | Part Design |", "| 2 | GSA |"].join(
+            "\n",
+          )
+        }
+      />,
+    );
+
+    expect(container.querySelector("table")).not.toBeNull();
+    expect(screen.getByRole("columnheader", { name: "Workbench" })).toBeInTheDocument();
+    expect(screen.getByRole("cell", { name: "Part Design" })).toBeInTheDocument();
+    // The pipes must not survive as text anywhere.
+    expect(container.textContent).not.toContain("|");
+  });
+
+  it("gives a wide table its own scroller so the transcript cannot go sideways", () => {
+    const { container } = render(
+      <MarkdownMessage content={["| a | b |", "| --- | --- |", "| 1 | 2 |"].join("\n")} />,
+    );
+    const wrapper = container.querySelector("table")?.parentElement;
+    expect(wrapper?.className).toContain("overflow-x-auto");
+  });
 });
