@@ -1,3 +1,17 @@
+# Kryova frontend CI.
+#
+# `npm run lint`, `npx tsc --noEmit` and `npm run test` are all currently clean
+# and CLAUDE.md says only discipline keeps them so. This is what replaces the
+# discipline.
+#
+# Every step below is a command a developer already runs by hand, in the same
+# order, with no CI-only tooling -- a step nobody can reproduce on their machine
+# is a step that rots.
+#
+# Actions are pinned to a commit SHA with the readable tag beside it: a tag is a
+# moving pointer, and CI is the one place a silently updated third-party action
+# runs with the repository checked out and a token in the environment.
+
 name: CI
 
 on:
@@ -7,8 +21,11 @@ on:
 
 # A new push to the same branch makes the in-flight run obsolete.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: frontend-ci-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -16,11 +33,16 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: actions/setup-node@v4
+      # The Node version lives in `.nvmrc`, not in this file: `nvm use`, `fnm`
+      # and this action all read it, so the version CI runs is the version a
+      # developer's shell picks up. Node 24 because that is what the repo is
+      # developed and desktop-built on today (24.14.0 on the Windows seat), not
+      # because it is the newest -- Next 16 and the Tauri build both work on 22.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: npm
 
       # `npm ci` rather than `npm install`: it fails loudly when
@@ -28,6 +50,13 @@ jobs:
       # resolving a different tree than any developer has locally.
       - name: Install
         run: npm ci
+
+      # The three-dependency rule is a design decision this repo states in
+      # CLAUDE.md and that nothing else in the toolchain notices being broken --
+      # lint, tsc, vitest and the build are all happy with a fourth package.
+      # Cheap, and it runs before the slow steps.
+      - name: Runtime dependencies
+        run: node scripts/check-dependencies.mjs
 
       - name: Lint
         run: npm run lint
@@ -43,4 +72,6 @@ jobs:
       - name: Build
         run: npm run build
         env:
+          # Baked into the client bundle at build time. A placeholder, not a
+          # secret -- this build is a compile check, never a deploy artefact.
           NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1

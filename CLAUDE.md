@@ -34,9 +34,26 @@ npx tsc --noEmit       typecheck
 npm run setup          scripts/setup.mjs — checks Node, installs, writes .env.local, builds
 ```
 
-`npm run test`, `npm run lint` and `npx tsc --noEmit` are all **currently clean**. Keep them
-clean; there is no CI to catch a regression (no `.github/`), so run all three yourself before
-calling anything done.
+`npm run test`, `npm run lint` and `npx tsc --noEmit` are all **currently clean**, and since
+2026-09-06 CI is what keeps them so — this paragraph used to say "there is no CI to catch a
+regression (no `.github/`)", which was wrong: `.github/workflows/ci.yml` has been running lint,
+`tsc`, vitest and the build on every push since 2026-08-29. Run all three yourself anyway; a
+failure found here is a minute, and one found in CI is a round trip.
+
+Two things CI checks that no local command does by default:
+
+- **`node scripts/check-dependencies.mjs`** — the three-dependency rule below. Nothing else in
+  the toolchain notices a fourth package being added; lint, `tsc`, vitest and the build are all
+  perfectly happy with one. Adding a dependency on purpose means adding it to `ALLOWED` in that
+  script in the same commit, which is exactly what makes it a named decision rather than an
+  import.
+- **`.nvmrc` pins Node** (24), and CI reads that file rather than naming a version of its own,
+  so `nvm use` / `fnm` and CI cannot drift apart.
+
+`.github/workflows/desktop.yml` is `workflow_dispatch` only: it `cargo check`s the Tauri shell on
+Windows and deliberately builds **no** release artefact. The reason is written at the top of that
+file and it is worth reading before anyone wires up a tagged release — the MSI bakes the build
+machine's absolute paths into the binary, so one built on a runner starts nothing.
 
 ## Architecture
 
