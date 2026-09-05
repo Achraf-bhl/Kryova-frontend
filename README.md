@@ -54,10 +54,12 @@ every figure it quotes has to appear in the solver result verbatim.
 Download `Kryova_0.1.0_x64_en-US.msi` from
 [Releases](https://github.com/Achraf-bhl/Kryova-frontend/releases) and run it.
 
-> **Status:** the MSI is configured (WiX bundle, upgrade code, branded icon)
-> but **has not been built or install-tested yet** — that needs a Windows
-> machine and there is no Windows runner in CI. Build it yourself with
-> `npm run desktop:msi` on Windows, or use the source install below.
+> **Status:** the MSI **builds** on Windows — `Kryova_0.2.0_x64_en-US.msi`,
+> 3.8 MB, produced by `npm run desktop:msi` on 2026-09-05 (and 0.1.1 and 0.1.2
+> before it). What is still untested is the **install**: nothing has run the
+> installer and confirmed the app starts from it, and there is no Windows
+> runner in CI to do so, so a release still needs a human. This paragraph used
+> to say it had never been built at all, which stopped being true on 2026-08-30.
 
 ### Build the desktop app from source
 
