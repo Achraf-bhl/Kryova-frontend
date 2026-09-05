@@ -14,6 +14,10 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Rust build output: generated JS shipped into the Tauri bundle.
     "src-tauri/target/**",
+    // Agent scratch. Git ignores it via its own .gitignore; flat config does
+    // not skip dot-directories the way eslintrc did, so a hook writing a bare
+    // timestamp to a file named .ts becomes a lint warning about our source.
+    ".remember/**",
   ]),
 ]);
 
