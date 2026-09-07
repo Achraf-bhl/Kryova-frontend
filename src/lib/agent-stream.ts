@@ -9,6 +9,19 @@ import { fetchWithRefresh } from "@/lib/api-client";
 
 export type AgentEvent =
   | { type: "start"; conversation_id: string }
+  /**
+   * One iteration of the agent's loop is starting — the model is being asked
+   * what to do next.
+   *
+   * `step`/`max_steps` are **loop rounds against a backstop**, not the tool
+   * steps the user sees listed. One round can run several tools (the backend
+   * iterates `turn.tool_calls`), and a round can run *none* at all when the
+   * model's answer has to be corrected and re-asked (`agent.py` `continue`s on
+   * a tool call written as prose). So this number is neither the position in
+   * the step list nor a fraction of the work to come: `max_steps` is only the
+   * point at which the turn is cut off. Read it as remaining budget and
+   * nothing else — see `AgentProgress` in `components/agent-step-list.tsx`.
+   */
   | { type: "thinking"; step: number; max_steps: number }
   | { type: "narration"; content: string }
   | {
@@ -35,8 +48,17 @@ export type AgentEvent =
       /** The conversation's project scope, set when the agent created one this turn. */
       project_id: string | null;
       truncated: boolean;
+      /** Tool calls actually run this turn — the length of the step list. */
       steps: number;
+      prompt_tokens?: number;
+      completion_tokens?: number;
     }
+  /**
+   * Emitted by the route (not the loop) after a turn settles, when the
+   * conversation has just been titled. Nothing here consumes it yet; it is in
+   * the union because it is on the wire — see `app/api/routes/ai.py`.
+   */
+  | { type: "title"; title: string }
   | { type: "error"; message: string };
 
 export interface ChatRequest {
@@ -105,8 +127,17 @@ export async function streamAgent(
       if (!line) continue;
       try {
         onEvent(JSON.parse(line.slice(5).trim()) as AgentEvent);
-      } catch {
-        // A malformed frame should not kill a run that is otherwise working.
+      } catch (error) {
+        // A malformed frame should not kill a run that is otherwise working --
+        // but it must not vanish either. Swallowed silently, a truncated or
+        // non-JSON frame presents as an agent that simply skipped a step, with
+        // nothing anywhere to say a message was dropped. Warn and carry on:
+        // the run survives, and there is a line in the console to find.
+        console.warn(
+          "Dropped a malformed agent stream frame",
+          { frame: line.slice(0, 400) },
+          error,
+        );
       }
     }
   }

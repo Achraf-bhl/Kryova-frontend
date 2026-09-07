@@ -345,6 +345,29 @@ export const api = {
   revokeCatiaDevice: (deviceId: string) =>
     mutatingRequest<void>(`/catia/devices/${deviceId}`, { method: "DELETE" }),
 
+  // -- media -----------------------------------------------------------------
+
+  /**
+   * One stored blob, as bytes.
+   *
+   * This is how a CATIA screenshot reaches the chat, and it goes through the
+   * same transport as everything else on purpose. The obvious alternative —
+   * `<img src="…/media/{id}/content" crossOrigin="use-credentials">` — was
+   * rejected for two reasons: it needs the backend's CORS to keep answering
+   * credentialed *image* requests for the exact deploy origin forever, and an
+   * `<img>` has no way to notice a 401 and retry through `/auth/refresh`, so
+   * every picture in the transcript would break fifteen minutes into a session
+   * with nothing but a broken-image icon to say why. Going through
+   * `fetchWithRefresh` gets the single-flight refresh retry for free, and the
+   * `blob:` URL the caller builds from this is already inside the CSP
+   * (`img-src 'self' data: blob:` in `src/proxy.ts`) with no policy change.
+   *
+   * The caller owns the `Blob`: `URL.createObjectURL` on it leaks until
+   * `URL.revokeObjectURL`.
+   */
+  mediaBlob: (mediaId: string) =>
+    requestBlob(`/media/${encodeURIComponent(mediaId)}/content`),
+
   interpretSimulation: (projectId: string, simulationId: string) =>
     mutatingRequest<ResultInterpretation>(
       `/projects/${projectId}/simulations/${simulationId}/interpretation`,
@@ -366,6 +389,27 @@ async function requestBuffer(path: string, init?: RequestInit): Promise<ArrayBuf
     await failFromResponse(response, `Request failed with ${response.status}`);
   }
   return response.arrayBuffer();
+}
+
+/**
+ * A binary response as a `Blob`, keeping the `Content-Type` the backend sent.
+ *
+ * Separate from `requestBuffer` because the type is the point: an `ArrayBuffer`
+ * has thrown it away, and the only honest way to say "this really is an image"
+ * is to read it off the response the server actually gave.
+ */
+async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const headers = new Headers(init?.headers);
+  headers.set("x-requested-with", "kryova");
+  const response = await fetchWithRefresh(path, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    await failFromResponse(response, `Request failed with ${response.status}`);
+  }
+  return response.blob();
 }
 
 export { ApiError };

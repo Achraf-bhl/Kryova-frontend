@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 
-import { AgentStepList } from "@/components/agent-step-list";
+import { activityLabel, AgentStepList } from "@/components/agent-step-list";
 import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { Composer } from "@/components/chat/composer";
@@ -196,10 +196,20 @@ export function ChatView({
   const lastTurn = turns[turns.length - 1];
   const answer = !busy && lastTurn?.role === "assistant" ? lastTurn.content : "";
 
-  /** What a screen reader hears while the agent works. */
+  /**
+   * What a screen reader hears while the agent works.
+   *
+   * `activityLabel` is built from the same steps and loop state the panel
+   * renders, so the announcement can never name a number the list contradicts
+   * — it used to announce "step 3 of 20", a round budget, over a list that had
+   * five rows in it. The model's own narration is announced only until there
+   * is real progress to report: once steps exist, re-reading a sentence of
+   * prose on every one of them buries the thing that changed.
+   */
   const activity = busy
-    ? narration ||
-      (thinking ? `Thinking, step ${thinking.step} of ${thinking.maxSteps}` : "Working…")
+    ? liveSteps.length === 0 && narration
+      ? narration
+      : activityLabel(liveSteps, thinking)
     : "";
 
   return (
@@ -282,8 +292,12 @@ export function ChatView({
                   )}
                   {turn.truncated && (
                     <p className="text-xs text-warning">
-                      The agent ran out of steps for that turn. Ask for one thing at a time and it
-                      will get further.
+                      {/* "tool rounds", matching the ceiling the panel warns
+                          about on the way there — the same cap, named the same
+                          way, rather than "steps", which the panel now uses for
+                          the rows in the list. */}
+                      The agent ran out of tool rounds for that turn. Ask for one thing at a time
+                      and it will get further.
                     </p>
                   )}
                   {turn.error && (

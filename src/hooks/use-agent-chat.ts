@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { StepView } from "@/components/agent-step-list";
+import type { AgentProgress, StepView } from "@/components/agent-step-list";
 import { api } from "@/lib/api-client";
 import type { Turn } from "@/lib/conversation-transcript";
 import { streamAgent, type AgentEvent } from "@/lib/agent-stream";
@@ -55,7 +55,17 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const [error, setError] = useState<string | null>(null);
   const [allowMutations, setAllowMutations] = useState(defaultAllowMutations);
   const [liveSteps, setLiveSteps] = useState<StepView[]>([]);
-  const [thinking, setThinking] = useState<{ step: number; maxSteps: number } | null>(null);
+  /**
+   * The loop's state for the turn in flight, null between turns.
+   *
+   * It survives a `tool_start` on purpose. It used to be cleared there, so the
+   * panel's counter vanished for the whole duration of every tool call and
+   * came back with a different number — a readout that blinks off during the
+   * only part of a turn that takes real time. What `tool_start` actually means
+   * is that the model has stopped composing, which is one field of this, not
+   * the end of the turn.
+   */
+  const [thinking, setThinking] = useState<AgentProgress | null>(null);
   const [narration, setNarration] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(conversationIdProp);
 
@@ -155,13 +165,17 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
           }
           break;
         case "thinking":
-          setThinking({ step: event.step, maxSteps: event.max_steps });
+          // `step`/`max_steps` are the loop's own round budget, not a position
+          // in the step list below — carried under names that say so.
+          setThinking({ composing: true, round: event.step, maxRounds: event.max_steps });
           break;
         case "narration":
           setNarration(event.content);
           break;
         case "tool_start":
-          setThinking(null);
+          // The model has finished composing this round; the turn has not
+          // finished. Keep the round budget, drop the "thinking" dots.
+          setThinking((previous) => (previous ? { ...previous, composing: false } : previous));
           updateSteps((previous) => [
             ...previous,
             {
@@ -276,6 +290,18 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
         );
       } catch (err) {
         if ((err as Error).name === "AbortError") {
+          // Same reason the `error` event does it: a step frozen at "running"
+          // in a settled turn claims a CATIA call is still in flight forever,
+          // and it also leaves the counter reading "step 3" on a turn that
+          // stopped. Stopping the stream does not stop the seat, so say
+          // "stopped", not "failed".
+          updateSteps((previous) =>
+            previous.map((step) =>
+              step.status === "running"
+                ? { ...step, status: "error" as const, summary: "Stopped" }
+                : step,
+            ),
+          );
           settleSteps({ error: "You stopped this run." });
         } else {
           const detail =
