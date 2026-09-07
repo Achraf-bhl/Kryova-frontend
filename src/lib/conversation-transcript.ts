@@ -15,6 +15,8 @@ export interface Turn {
   content: string;
   steps?: StepView[];
   truncated?: boolean;
+  /** Why an unfinished turn stopped — see `AgentEvent`'s `done` event. */
+  stopReason?: "step_budget" | "repeated_calls";
   /** Set when the turn ended in an error, so the UI can offer a retry. */
   error?: string;
 }

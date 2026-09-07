@@ -292,12 +292,23 @@ export function ChatView({
                   )}
                   {turn.truncated && (
                     <p className="text-xs text-warning">
-                      {/* "tool rounds", matching the ceiling the panel warns
-                          about on the way there — the same cap, named the same
-                          way, rather than "steps", which the panel now uses for
-                          the rows in the list. */}
-                      The agent ran out of tool rounds for that turn. Ask for one thing at a time
-                      and it will get further.
+                      {/* Two different endings, two different remedies, and
+                          saying the wrong one costs the user the next turn as
+                          well. Measured on ladder prompt PRO1, 2026-09-08: the
+                          agent was stopped at step 31 of 60 for re-issuing a
+                          call the tool layer had already refused, and this line
+                          told the user it had run out of rounds and to ask for
+                          one thing at a time — half the budget was unspent, and
+                          narrowing the request would not have stopped the
+                          repeat.
+
+                          "tool rounds" in the budget case matches the ceiling
+                          the panel warns about on the way there — the same cap,
+                          named the same way, rather than "steps", which the
+                          panel uses for the rows in the list. */}
+                      {turn.stopReason === "repeated_calls"
+                        ? "The agent stopped because it kept repeating a call that had already been refused. Tell it what to do differently — it keeps everything it built."
+                        : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
                     </p>
                   )}
                   {turn.error && (

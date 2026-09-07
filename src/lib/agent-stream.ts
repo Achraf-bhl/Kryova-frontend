@@ -48,6 +48,17 @@ export type AgentEvent =
       /** The conversation's project scope, set when the agent created one this turn. */
       project_id: string | null;
       truncated: boolean;
+      /**
+       * Why the loop stopped, when `truncated` is true. Two exits reach the
+       * same closing code in `app/ai/agent.py` and until 2026-09-08 both were
+       * shown as "ran out of tool rounds": `"step_budget"` really did, and
+       * `"repeated_calls"` was ended early for re-issuing a call the tool
+       * layer had already refused. The remedies are opposite -- ask for less
+       * versus say something different -- so the banner has to tell them
+       * apart. Optional: a backend that predates the field sends nothing, and
+       * the old wording is the right fallback for a turn that hit the cap.
+       */
+      stop_reason?: "finished" | "step_budget" | "repeated_calls";
       /** Tool calls actually run this turn — the length of the step list. */
       steps: number;
       prompt_tokens?: number;

@@ -328,3 +328,110 @@ describe("ChatView — the step counter", () => {
     expect(within(panel()).getByText("1 step")).toBeInTheDocument();
   });
 });
+
+describe("ChatView — why an unfinished turn stopped", () => {
+  let emit: (event: AgentEvent) => void;
+  let settle: () => void;
+
+  beforeEach(() => {
+    streamAgent.mockReset();
+    streamAgent.mockImplementation((_payload, onEvent, signal) => {
+      emit = onEvent;
+      return new Promise<void>((resolve, reject) => {
+        settle = resolve;
+        signal?.addEventListener("abort", () => {
+          const aborted = new Error("The user stopped the run.");
+          aborted.name = "AbortError";
+          reject(aborted);
+        });
+      });
+    });
+  });
+
+  async function endTurnWith(done: AgentEvent) {
+    render(<ChatView {...user} conversationId="conv-1" title="Press" />);
+    await userEvent.type(
+      screen.getByRole("textbox", { name: /message the kryova agent/i }),
+      "Design an arbor press",
+    );
+    await userEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await waitFor(() => expect(streamAgent).toHaveBeenCalled());
+    act(() => {
+      emit({
+        type: "tool_start",
+        id: "c1",
+        tool: "catia_list_features",
+        label: "List",
+        arguments: {},
+      });
+      emit({
+        type: "tool_end",
+        id: "c1",
+        tool: "catia_list_features",
+        ok: true,
+        result: {},
+        summary: "Done",
+        duration_ms: 3,
+      });
+      emit({ type: "message", content: "I stopped." });
+      emit(done);
+    });
+    await act(async () => {
+      settle();
+    });
+  }
+
+  /**
+   * **Measured on ladder prompt PRO1, 2026-09-08.** The agent was ended at step
+   * 31 of 60 by `MAX_BLOCKED_REPEATS` for re-issuing a read the tool layer had
+   * already refused, and this banner told the user it had "run out of tool
+   * rounds" and to "ask for one thing at a time". Both halves were wrong: half
+   * the budget was unspent, and narrowing the request would not have stopped
+   * the repeat. Advice that does not match the cause spends the user's next
+   * turn changing the one thing that was fine.
+   */
+  it("says it was stuck, not out of budget, when it was stopped for repeating a call", async () => {
+    await endTurnWith({
+      type: "done",
+      conversation_id: "conv-1",
+      project_id: null,
+      truncated: true,
+      stop_reason: "repeated_calls",
+      steps: 31,
+    });
+
+    expect(screen.getByText(/kept repeating a call/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ran out of tool rounds/i)).not.toBeInTheDocument();
+    // The recovery must not be "ask for less" — it is "say something else",
+    // and it must say the work is kept, or the user starts over.
+    expect(screen.getByText(/keeps everything it built/i)).toBeInTheDocument();
+  });
+
+  it("still says out of rounds when that is what happened", async () => {
+    await endTurnWith({
+      type: "done",
+      conversation_id: "conv-1",
+      project_id: null,
+      truncated: true,
+      stop_reason: "step_budget",
+      steps: 60,
+    });
+
+    expect(screen.getByText(/ran out of tool rounds/i)).toBeInTheDocument();
+    expect(screen.queryByText(/kept repeating a call/i)).not.toBeInTheDocument();
+  });
+
+  it("falls back to the budget wording when the backend sends no reason", async () => {
+    // A backend older than the field is not a reason to show nothing, and the
+    // cap is the case that existed before it.
+    await endTurnWith({
+      type: "done",
+      conversation_id: "conv-1",
+      project_id: null,
+      truncated: true,
+      steps: 60,
+    });
+
+    expect(screen.getByText(/ran out of tool rounds/i)).toBeInTheDocument();
+  });
+});

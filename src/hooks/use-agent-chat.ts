@@ -115,7 +115,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
 
   /** Fold this turn's steps into the answer it produced, and clear them. */
   const settleSteps = useCallback(
-    (extra?: { truncated?: boolean; error?: string }) => {
+    (extra?: { truncated?: boolean; stopReason?: Turn["stopReason"]; error?: string }) => {
       const steps = liveStepsRef.current;
       updateSteps(() => []);
       if (steps.length === 0 && !extra?.error && !extra?.truncated) return;
@@ -133,6 +133,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
               ...last,
               ...(steps.length > 0 ? { steps } : {}),
               ...(extra?.truncated ? { truncated: true } : {}),
+              ...(extra?.stopReason ? { stopReason: extra.stopReason } : {}),
               ...(extra?.error ? { error: extra.error } : {}),
             },
           ];
@@ -145,6 +146,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             content: "",
             ...(steps.length > 0 ? { steps } : {}),
             ...(extra?.truncated ? { truncated: true } : {}),
+            ...(extra?.stopReason ? { stopReason: extra.stopReason } : {}),
             ...(extra?.error ? { error: extra.error } : {}),
           },
         ];
@@ -219,7 +221,14 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             reportedProjectRef.current = event.project_id;
             onProjectCreatedRef.current?.(event.project_id);
           }
-          settleSteps({ truncated: event.truncated });
+          settleSteps({
+            truncated: event.truncated,
+            // Only carried for the two unfinished exits; "finished" would
+            // never be read, because the banner is behind `truncated`.
+            ...(event.stop_reason === "step_budget" || event.stop_reason === "repeated_calls"
+              ? { stopReason: event.stop_reason }
+              : {}),
+          });
           setThinking(null);
           setNarration("");
           break;
