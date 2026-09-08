@@ -28,7 +28,7 @@ pnpm/npm install       (npm is what the lockfile tracks — package-lock.json)
 npm run dev            dev server
 npm run build          production build
 npm start              serve the build
-npm run test           vitest run  (237 tests, ~7s)
+npm run test           vitest run  (323 tests, ~7s)
 npm run lint           eslint
 npx tsc --noEmit       typecheck
 npm run setup          scripts/setup.mjs — checks Node, installs, writes .env.local, builds
@@ -94,6 +94,22 @@ full. When a new conversation's `start` event arrives mid-stream the id is writt
 `window.history.replaceState` (supported by Next; `router.replace` would re-render the route
 and cut the stream). The project/run/results pages are still there, one click away in the
 sidebar.
+
+**A picture of the part reaches the conversation by two different routes, and they are not
+interchangeable.** On a seat the agent calls `catia_capture_view`, the result carries a
+`media_id`, and `lib/tool-media.ts` + `components/tool-image.tsx` draw it *in the step row it
+belongs to*. On `GEOMETRY_BACKEND=occt` there is no seat and no capture: the geometry is in the
+API process and `GET /kernel/conversations/{id}/render` draws it on demand
+(`lib/kernel-render.ts` + `components/kernel-part-view.tsx`). That endpoint has **no history** —
+it draws the document as it stands — so the OCCT picture is pinned above the composer beside the
+CATIA chip, never in the transcript, because a copy sitting next to turn 3 would silently redraw
+itself into turn 9's part. Which of the two is live is read off `GET /catia/status`.
+
+**`CatiaStatus` is a three-way union and `connected: true` does not mean a workstation.** The
+open kernel reports `connected: true` (a tool call will succeed) with `backend: "occt"` and
+**none** of the device fields — no `device_name`, no `catia_version`, no `connected_since`.
+Narrow with `isLocalKernel()` before reading any of them. The untyped version of this put the
+literal word "undefined" into the status chip's tooltip on every open-kernel deployment.
 
 **Each conversation owns at most one CATIA document**, and the sidebar's `.k-conv-dot` says
 which ones do. The bridge daemon dials **out** from the Windows box to the backend — there is
@@ -242,7 +258,7 @@ actually shipped, so they are the ones to check for in review.
 ## Testing
 
 - vitest + jsdom, setup in `src/test/setup.ts`, config in `vitest.config.ts`
-- 237 tests across `src/lib/`, `src/components/` and `src/hooks/`. Component tests exist now
+- 323 tests across `src/lib/`, `src/components/` and `src/hooks/`. Component tests exist now
   (`agent-step-list`, `error-boundary`, `markdown-message`, `chat/composer`, `chat/chat-view`)
   and are the pattern to copy; there is still **no e2e**. The pure logic behind the chat lives
   in `lib/` on purpose — grouping, transcript rehydration, markdown — so it is testable without

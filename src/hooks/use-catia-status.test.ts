@@ -29,6 +29,7 @@ const { useCatiaStatus } = await import("@/hooks/use-catia-status");
 const online: CatiaStatus = {
   connected: true,
   enabled: true,
+  backend: "catia",
   paired_devices: 1,
   document: { doc_name: "Bracket.CATPart", latest_checkpoint_id: "c1", bound_at: "2026-08-29T09:00:00Z" },
   device_id: "d1",
@@ -43,9 +44,29 @@ const online: CatiaStatus = {
   connected_since: "2026-08-29T08:00:00Z",
 };
 
+/**
+ * `GET /catia/status` on `GEOMETRY_BACKEND=occt`: `connected: true` — a tool
+ * call will succeed — and **not one of the device fields**. Written out in full
+ * rather than spread from `online`, because the absence is the whole point.
+ */
+const openKernel: CatiaStatus = {
+  connected: true,
+  enabled: true,
+  backend: "occt",
+  backend_version: "OCCT 7.9.3",
+  paired_devices: 0,
+  operations_implemented: 116,
+  operations_declared: 201,
+  open_documents: 1,
+  document: { doc_name: "Part", evicted: false },
+  detail:
+    "Geometry is being built by the open kernel in this process — no CATIA seat is involved, and none is needed.",
+};
+
 const offline: CatiaStatus = {
   connected: false,
   enabled: true,
+  backend: "catia",
   paired_devices: 0,
   document: null,
   detail: "No workstation has been paired with this account yet.",
@@ -80,6 +101,21 @@ describe("useCatiaStatus", () => {
     renderHook(() => useCatiaStatus("conv-42"));
 
     await waitFor(() => expect(catiaStatus).toHaveBeenCalledWith("conv-42"));
+  });
+
+  it("does not describe the open kernel as a workstation it cannot name", async () => {
+    // The bug: `connected: true` is true of the open kernel too, and the seat
+    // branch reads `device_name` and `catia_version` off it. Both are absent,
+    // so the chip's tooltip and its screen-reader text read
+    // "undefined is connected, running CATIA" on every `GEOMETRY_BACKEND=occt`
+    // deployment — a sentence naming a machine that does not exist, on the one
+    // backend where no machine is involved at all.
+    catiaStatus.mockResolvedValue(openKernel);
+    const { result } = renderHook(() => useCatiaStatus("conv-1"));
+
+    await waitFor(() => expect(result.current.state).toBe("connected"));
+    expect(result.current.detail).not.toContain("undefined");
+    expect(result.current.detail).toContain("open kernel");
   });
 
   it("repeats the backend's reason when nothing is connected", async () => {

@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { useCatiaStatus } from "@/hooks/use-catia-status";
 import type { CatiaConnectionState } from "@/types/catia";
+import { isLocalKernel } from "@/types/catia";
 
 const DOT: Record<CatiaConnectionState, string> = {
   connected: "bg-live",
@@ -43,10 +44,22 @@ export function CatiaBridgePanel() {
       <div className="flex flex-wrap items-center gap-2.5 border-b border-border px-4 py-3">
         <span className={`size-2 rounded-full ${DOT[state]}`} aria-hidden="true" />
         <span className="text-sm font-medium text-accent">{HEADING[state]}</span>
-        {status?.connected && (
+        {/* Which build is answering. On a seat that is CATIA's version; on the
+            open kernel there is no CATIA at all and the honest answer is the
+            OCCT build. `connected: true` is true of both, which is why this
+            reads the narrowed status rather than the field — the untyped
+            version of this line rendered an empty pill on every open-kernel
+            deployment. */}
+        {isLocalKernel(status) ? (
           <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted">
-            {status.catia_version}
+            {status.backend_version}
           </span>
+        ) : (
+          status?.connected && (
+            <span className="rounded-sm bg-surface-sunken px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted">
+              {status.catia_version}
+            </span>
+          )
         )}
         <Link
           href="/dashboard/settings#catia"

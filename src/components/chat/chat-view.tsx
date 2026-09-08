@@ -10,6 +10,7 @@ import { Composer } from "@/components/chat/composer";
 import { CopyButton } from "@/components/chat/copy-button";
 import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
+import { KernelPartView } from "@/components/kernel-part-view";
 import { MeshOrb } from "@/components/mesh-orb";
 import { PartIcon } from "@/components/ui/icons";
 import { useAgentChat } from "@/hooks/use-agent-chat";
@@ -17,6 +18,7 @@ import { useCatiaStatus } from "@/hooks/use-catia-status";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { notifyConversationsChanged } from "@/lib/conversation-events";
 import { resumeNotice } from "@/lib/conversation-resume";
+import { kernelPartState } from "@/lib/kernel-render";
 import type { Turn } from "@/lib/conversation-transcript";
 import { toPlainText } from "@/lib/markdown";
 import type { ConversationResume } from "@/types/conversation";
@@ -156,6 +158,21 @@ export function ChatView({
   const catia = useCatiaStatus(liveConversationId);
   const catiaDocument =
     catia.status?.document?.doc_name ?? (liveConversationId === conversationId ? boundDocument : null);
+
+  // The open kernel's answer to "the user sees what the agent sees". On a seat
+  // the picture arrives inside a tool result and is drawn in the step row; here
+  // there is no capture, so it is asked for — and it is pinned to the live
+  // state rather than to a turn, because the render endpoint draws the part as
+  // it stands and has no history to place in a transcript. `kernelPartState`
+  // returns `absent` on every CATIA deployment, so this renders nothing there.
+  const partState = useMemo(
+    () => kernelPartState(catia.status, liveConversationId),
+    [catia.status, liveConversationId],
+  );
+  // Once per finished turn, not on a timer: the geometry moves when the agent
+  // acts. A repeat over unchanged geometry costs a 304 — the render is
+  // deterministic, so the ETag is a real content hash.
+  const partRevision = busy ? turns.length : turns.length + 1;
 
   // The greeting depends on the reader's clock, and a server rendering in UTC
   // would wish a user in Abidjan good evening at noon. `useSyncExternalStore`
@@ -375,6 +392,21 @@ export function ChatView({
 
       <div className={`px-4 pb-5 sm:px-6 ${empty ? "" : "pt-2"}`}>
         <div className="mx-auto w-full max-w-3xl">
+          {/* Above the composer rather than in the transcript, and for the same
+              reason the CATIA chip is here: this says what is true *now*. The
+              render endpoint draws the document as it stands, so a copy of it
+              sitting next to an old turn would quietly redraw itself into a
+              later part. Renders nothing at all unless the open kernel is what
+              builds here — see `lib/kernel-render.ts`. */}
+          {liveConversationId !== null && (
+            <div className="mb-2">
+              <KernelPartView
+                conversationId={liveConversationId}
+                state={partState}
+                revision={partRevision}
+              />
+            </div>
+          )}
           <Composer
             value={input}
             onChange={setInput}

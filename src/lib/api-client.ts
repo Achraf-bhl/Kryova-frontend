@@ -368,6 +368,34 @@ export const api = {
   mediaBlob: (mediaId: string) =>
     requestBlob(`/media/${encodeURIComponent(mediaId)}/content`),
 
+  /**
+   * A PNG of the part the open kernel is building for one conversation.
+   *
+   * The counterpart of `mediaBlob` for `GEOMETRY_BACKEND=occt`, where there is
+   * no seat to screenshot and no stored media object: the geometry is in the
+   * API process and this endpoint draws it on demand. `requestBlob` for the
+   * same reason — the `Content-Type` the server sent is the only honest way to
+   * say the bytes really are an image, and `fetchWithRefresh` keeps the picture
+   * alive across an access-token expiry.
+   *
+   * The response carries a strong `ETag` that is the render's own digest, which
+   * is not a trick: the backend's rendering is deterministic, so identical
+   * geometry really does produce identical bytes. Asking again after a turn that
+   * changed nothing costs a 304 and no pixels. Nothing here sets a cache mode —
+   * the default already revalidates against `Cache-Control: no-cache`.
+   *
+   * Returns the headers' answers alongside the bytes rather than only the
+   * bytes: `X-Kryova-Blank` is the renderer saying it drew an empty frame, and
+   * an empty frame is a valid PNG that looks exactly like a successful render
+   * of a part that happens to fall outside this view. Inferring it from the
+   * compressed size would be a guess where the server has already measured it.
+   * (Both headers are in the backend's `expose_headers`; they were not until
+   * this caller existed, so they were being set for nobody.)
+   *
+   * The caller owns the `Blob` and must revoke the object URL built from it.
+   */
+  kernelRender: (path: string) => requestRender(path),
+
   interpretSimulation: (projectId: string, simulationId: string) =>
     mutatingRequest<ResultInterpretation>(
       `/projects/${projectId}/simulations/${simulationId}/interpretation`,
@@ -410,6 +438,39 @@ async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
     await failFromResponse(response, `Request failed with ${response.status}`);
   }
   return response.blob();
+}
+
+/** A drawing of the part, plus what the renderer said about it. */
+export interface RenderedPart {
+  blob: Blob;
+  /**
+   * The renderer drew an empty frame — measured by it, not guessed here.
+   *
+   * `false` when the header is missing, which is the safe direction: an old
+   * backend, or a proxy that strips it, then produces a picture with no caption
+   * rather than a real part captioned as nothing.
+   */
+  blank: boolean;
+  /** The camera the server actually used, which need not be the one asked for. */
+  view: string | null;
+}
+
+async function requestRender(path: string, init?: RequestInit): Promise<RenderedPart> {
+  const headers = new Headers(init?.headers);
+  headers.set("x-requested-with", "kryova");
+  const response = await fetchWithRefresh(path, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+  if (!response.ok) {
+    await failFromResponse(response, `Request failed with ${response.status}`);
+  }
+  return {
+    blob: await response.blob(),
+    blank: response.headers.get("X-Kryova-Blank") === "1",
+    view: response.headers.get("X-Kryova-View"),
+  };
 }
 
 export { ApiError };

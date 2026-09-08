@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, api } from "@/lib/api-client";
 import { openCatiaEventStream } from "@/lib/catia-events";
+import { isLocalKernel } from "@/types/catia";
 import type { CatiaConnectionState, CatiaEvent, CatiaStatus } from "@/types/catia";
 
 /**
@@ -52,6 +53,13 @@ function describe(status: CatiaStatus | null, error: string | null): string {
   if (!status.enabled) {
     return "CATIA integration is switched off on this server.";
   }
+  // The open kernel before the seat, because it is `connected: true` and has
+  // none of the device fields the branch below reads. Reaching that branch put
+  // the literal word "undefined" in the tooltip and the screen-reader text on
+  // every `GEOMETRY_BACKEND=occt` deployment. The backend's own `detail` is
+  // already a full sentence saying no seat is involved and none is needed, so
+  // this defers to it rather than writing a second version of the same fact.
+  if (isLocalKernel(status)) return status.detail;
   if (status.connected) {
     const version = status.catia_version || "CATIA";
     return status.mock
