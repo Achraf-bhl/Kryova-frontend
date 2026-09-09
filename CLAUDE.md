@@ -74,18 +74,27 @@ src/
         page.tsx                      geometry versions + simulation list
         simulate/page.tsx             load-case editor → POST simulation
         simulations/[simulationId]/   poll job, render results + WebGL viewer
-  components/     chat/{chat-view,composer,catia-chip,attach-pill,resume-notice}, mesh-orb,
-                  markdown-message, agent-step-list, catia/{device-manager}, catia-bridge-panel,
-                  webgl-stress-viewer, geometry-preview, error-boundary, skeleton,
-                  ui/{button,input,pill,page-shell,icons}
-  hooks/          use-agent-chat.ts, use-catia-status.ts
+  components/     chat/{chat-view,composer,catia-chip,attach-pill,resume-notice,copy-button},
+                  simulate/{fixture-editor,load-editor,selector-fields,vector-field},
+                  catia/{device-manager}, catia-bridge-panel,
+                  agent-chat, agent-step-list, markdown-message, mesh-orb, tool-image,
+                  kernel-part-view, result-interpretation, geometry-preview,
+                  webgl-stress-viewer, error-boundary, skeleton, index.ts (barrel),
+                  ui/{button,input,select,pill,page-shell,icons,index.ts}
+  hooks/          use-agent-chat.ts, use-catia-status.ts, use-stick-to-bottom.ts
   lib/            api-client.ts, server-api.ts, auth-context.tsx, agent-stream.ts,
-                  catia-events.ts, markdown.ts,
+                  catia-events.ts, markdown.ts, chunked-upload.ts, safe-redirect.ts,
                   conversation-{groups,transcript,events,resume}.ts,
-                  format.ts, system.ts
+                  poll-schedule.ts, load-case.ts, surface-field.ts,
+                  tool-media.ts, kernel-render.ts, format.ts, system.ts
   types/          api.ts, conversation.ts, catia.ts — hand-written mirrors of the
                   backend Pydantic schemas
+  test/           setup.ts (vitest); every other test is a `*.test.ts(x)` sibling
 ```
+
+The tree above was re-checked against disk on **2026-09-09**. It had drifted: seven `lib/`
+modules were missing, two of which (`tool-media`, `kernel-render`) the prose immediately below
+described by name.
 
 **The chat is the product.** `/dashboard` is a new conversation;
 `/dashboard/c/[conversationId]` is an existing one and **the id lives in the URL** — it used
@@ -173,20 +182,15 @@ have permission"; render "not found".
 
 ## Known landmines in the current code
 
-Verified against the tree on **2026-08-25**. Re-verify before trusting this section — it went
-stale once already. History is kept deliberately: these are the bug *classes* this code has
-actually shipped, so they are the ones to check for in review.
+Verified against the tree on **2026-09-09**. Re-verify before trusting this section — it has gone
+stale twice now, and the second time two entries in *Still live* had been fixed for days, which
+costs a session re-fixing what works. History is kept deliberately: these are the bug *classes*
+this code has actually shipped, so they are the ones to check for in review.
 
 **Still live:**
 
 - **The chat transcript is not virtualised.** Every turn of every length renders. Fine at the
   session lengths seen so far; it is the next thing to hurt on a very long conversation.
-- **`scaleFactor` is in the WebGL viewer's effect deps** — every slider tick tears down and
-  rebuilds the program, shaders and all four buffers. Cleanup deletes them now (no leak), but
-  the rebuild is waste: only the displaced-position buffer depends on `scaleFactor`.
-- **Success-path polling is a flat 1500 ms with no overall ceiling**
-  (`simulations/[simulationId]/page.tsx`). The backoff applies only to *errors* (3 strikes then
-  give up); a job stuck in RUNNING polls forever.
 - **`types/api.ts` (and `conversation.ts`, `catia.ts`) are hand-maintained and nothing
   verifies them** — see Architecture above.
 - **The markdown renderer is a deliberate subset** (`lib/markdown.ts`): bold, inline/fenced
@@ -196,6 +200,16 @@ actually shipped, so they are the ones to check for in review.
 
 **Fixed — do not "fix" again:**
 
+- ~~`scaleFactor` is in the WebGL viewer's effect deps, so every slider tick tears down and
+  rebuilds the program, shaders and all four buffers~~ → the GL setup effect's deps are
+  `[data, contextLost, glGeneration]`; `scaleFactor` feeds a three-line effect that writes
+  `scaleFactorRef` and calls `refreshGeometryRef.current?.(scaleFactor)`, so a tick refreshes
+  the one buffer that depends on it (`webgl-stress-viewer.tsx:389-391`).
+- ~~Success-path polling is a flat 1500 ms with no overall ceiling; a job stuck in RUNNING polls
+  forever~~ → `lib/poll-schedule.ts`, a pure timer-free state machine: 1.5 s growing 1.35× to a
+  15 s ceiling, `POLL_GIVE_UP_MS` of 30 minutes measured from the **first** poll (not the last,
+  so backoff cannot stretch the deadline), 3 consecutive errors before surfacing. Tested by
+  driving it directly — keep it free of React and timers, that is why it is testable.
 - ~~The conversation id lives in an in-memory ref, so a refresh or a nav click destroys a
   conversation the backend has fully persisted~~ → the id is a route param; the transcript is
   rehydrated server-side by `lib/conversation-transcript.ts`.
@@ -252,8 +266,11 @@ actually shipped, so they are the ones to check for in review.
 - Tailwind v4 with semantic tokens defined in `app/globals.css` (`bg-surface`, `text-muted`,
   `text-danger`, `border-border`, `shadow-card`, `text-accent`) — use those, not raw palette
   values, and add new tokens to `globals.css` rather than inlining hex
-- `components/ui/` has only `button` and `input` so far; put the next shared primitive there
-  rather than growing another ad-hoc Tailwind blob in a page
+- `components/ui/` holds `button`, `input`, `select`, `pill`, `page-shell` and `icons`, exported
+  through `ui/index.ts` — **check it before hand-rolling a primitive** (this line claimed "only
+  `button` and `input`" until 2026-09-09, which is exactly how a page grows its own select). Put
+  the next shared primitive there and add it to the barrel, rather than growing another ad-hoc
+  Tailwind blob in a page
 
 ## Testing
 
