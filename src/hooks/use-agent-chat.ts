@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentProgress, StepView } from "@/components/agent-step-list";
 import { api } from "@/lib/api-client";
 import type { Turn } from "@/lib/conversation-transcript";
-import { streamAgent, type AgentEvent } from "@/lib/agent-stream";
+import { resumeAgent, streamAgent, type CursoredEvent } from "@/lib/agent-stream";
 
 /** What an auto-created project is named before the agent gets a chance to
  * rename it to something that fits what the user actually asked for. */
@@ -104,6 +104,25 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const stoppingRef = useRef(false);
   const [stopping, setStopping] = useState(false);
 
+  /**
+   * The last event cursor seen this turn, for a reconnect (P5.1).
+   *
+   * A ref, not state: nothing renders it, and it has to be readable by the
+   * `catch` that fires the moment the connection drops — a state value there
+   * would be whatever it was when `run` closed over it, which is zero.
+   */
+  const cursorRef = useRef(0);
+  /**
+   * The answer as it is being written, from `token` deltas.
+   *
+   * Cleared the moment the `message` event lands, because that event carries
+   * the real text and this was only ever a preview of it. A provider that does
+   * not stream emits no deltas at all, so this simply stays empty and the
+   * answer appears whole — which is the honest rendering of "this provider does
+   * not stream" rather than a fake typewriter over an answer already in hand.
+   */
+  const [streamingText, setStreamingText] = useState("");
+
   const onConversationStartedRef = useRef(onConversationStarted);
   const onProjectCreatedRef = useRef(onProjectCreated);
   const onTurnFinishedRef = useRef(onTurnFinished);
@@ -166,7 +185,12 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   );
 
   const handleEvent = useCallback(
-    (event: AgentEvent) => {
+    (event: CursoredEvent) => {
+      // The cursor for a reconnect. Recorded on every event that carries one —
+      // the backend sends the event even when recording it failed, and a
+      // missing `seq` means "cannot resume from here", so the last good one is
+      // kept rather than overwritten with nothing.
+      if (typeof event.seq === "number") cursorRef.current = event.seq;
       switch (event.type) {
         case "start":
           if (event.conversation_id && conversationIdRef.current !== event.conversation_id) {
@@ -214,8 +238,27 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ),
           );
           break;
+        case "token":
+          // Deltas are for display while the answer is being written. The
+          // `message` event that follows carries the real text and replaces
+          // this — see `AgentEvent` for why concatenating them instead would be
+          // a second copy that drifts.
+          setStreamingText((previous) => previous + event.content);
+          break;
+        case "resume_gap":
+        case "resume_idle":
+          // The live events are gone or the turn went quiet. The transcript is
+          // complete, so this is a reload rather than an error: saying "the
+          // agent failed" about a turn that very likely succeeded is the worse
+          // of the two wrong answers.
+          setError(event.message);
+          settleSteps({ error: event.message });
+          setThinking(null);
+          setNarration("");
+          break;
         case "message":
           answeredRef.current = true;
+          setStreamingText("");
           setTurns((previous) => [
             ...previous,
             { id: nextTurnId("assistant"), role: "assistant", content: event.content },
@@ -231,6 +274,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             reportedProjectRef.current = event.project_id;
             onProjectCreatedRef.current?.(event.project_id);
           }
+          setStreamingText("");
           settleSteps({
             truncated: event.truncated,
             // Only carried for the two unfinished exits; "finished" would
@@ -270,6 +314,11 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
       answeredRef.current = false;
       setLastMessage(message);
       updateSteps(() => []);
+      setStreamingText("");
+      // A fresh turn resumes from nothing: its own `start` event supplies the
+      // first cursor. Carrying the previous turn's number forward would ask
+      // the server for events it has already shown.
+      cursorRef.current = 0;
       setBusy(true);
 
       // The first message of a brand-new conversation (no conversation id
@@ -324,6 +373,33 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ),
           );
           settleSteps({ error: "You stopped this run." });
+        } else if (conversationIdRef.current && !answeredRef.current) {
+          // The connection dropped on a turn that is very likely still running
+          // on the server — the agent loop does not care that nobody is
+          // listening. Rejoining from the cursor is the difference between
+          // losing the live view and losing the turn. It is a `GET`: a POST
+          // here would start a *second* turn, so a flaky connection would
+          // double every message it interrupted.
+          try {
+            await resumeAgent(
+              conversationIdRef.current,
+              cursorRef.current,
+              handleEvent,
+              controller.signal,
+            );
+          } catch {
+            const detail =
+              err instanceof Error ? err.message : "The assistant could not be reached.";
+            updateSteps((previous) =>
+              previous.map((step) =>
+                step.status === "running"
+                  ? { ...step, status: "error" as const, summary: "Interrupted" }
+                  : step,
+              ),
+            );
+            setError(detail);
+            settleSteps({ error: detail });
+          }
         } else {
           const detail =
             err instanceof Error ? err.message : "The assistant could not be reached.";
@@ -419,6 +495,12 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     liveSteps,
     thinking,
     narration,
+    /**
+     * The answer arriving token by token (P5.1), empty when nothing is
+     * streaming. Rendered *instead of* the finished message only while it is
+     * non-empty; the `message` event clears it and supplies the real text.
+     */
+    streamingText,
     send,
     retry,
     stop,

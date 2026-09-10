@@ -37,6 +37,7 @@ const BASE_SIMULATION: Omit<SimulationRead, "status" | "result" | "error"> = {
   load_case: { name: "Bracket load" },
   element_size_mm: 5,
   mesh_stats: null,
+  progress: null,
   fields_media_id: null,
   created_at: "2026-08-27T00:00:00Z",
   started_at: "2026-08-27T00:00:01Z",

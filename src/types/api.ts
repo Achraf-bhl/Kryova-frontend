@@ -292,6 +292,43 @@ export function jobStatusLabel(status: string): string {
   }
 }
 
+/** The stages a run passes through, in order. Mirrors `app/simulation/progress.py`. */
+export type SimulationStage = "meshing" | "solving" | "reading" | "storing";
+
+export interface SimulationProgress {
+  stage: SimulationStage;
+  /** Free text: element count, element size. Empty when there is nothing to add. */
+  detail: string;
+  /** Which grid of a convergence study. Null together with `total`. */
+  index: number | null;
+  total: number | null;
+  at: string;
+}
+
+/**
+ * One line for a person, from a progress snapshot.
+ *
+ * Returns `""` for a run that has not reported — rendered as "starting", never
+ * as stage zero of four, which would claim a stage had begun. Mirrors
+ * `progress.describe` on the backend; the two say the same thing so a log line
+ * and the screen never disagree about where a run got to.
+ */
+export function describeProgress(progress: SimulationProgress | null): string {
+  if (!progress) return "";
+  const labels: Record<SimulationStage, string> = {
+    meshing: "Building the mesh",
+    solving: "Solving",
+    reading: "Reading the results",
+    storing: "Storing the field data",
+  };
+  let line: string = labels[progress.stage] ?? progress.stage;
+  // A count of one is noise dressed as information.
+  if (progress.index !== null && progress.total !== null && progress.total > 1) {
+    line += ` — grid ${progress.index} of ${progress.total}`;
+  }
+  return progress.detail ? `${line} (${progress.detail})` : line;
+}
+
 export interface SimulationRead {
   id: string;
   project_id: string;
@@ -301,6 +338,20 @@ export interface SimulationRead {
   load_case: Record<string, unknown> | null;
   element_size_mm: number | null;
   mesh_stats: Record<string, unknown> | null;
+  /**
+   * Where a running job has got to (P5.2), or `null` before it reports.
+   *
+   * **There is no percentage in here on purpose.** For the linear-static
+   * workload CalculiX reports a single increment, so a fraction inside a solve
+   * would be invented — and an invented progress bar over a twenty-minute solve
+   * teaches a user to predict a finish time nobody measured. A convergence
+   * study does have countable progress, so it gets `index`/`total`; everything
+   * else gets a stage and nothing more.
+   *
+   * `index` and `total` are present together or not at all: the backend refuses
+   * half a count rather than shipping a numerator with no denominator.
+   */
+  progress: SimulationProgress | null;
   result: StaticResult | null;
   fields_media_id: string | null;
   error: string | null;
@@ -681,6 +732,203 @@ export interface GatePage {
   total: number;
   page: number;
   page_size: number;
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (P4.1, P4.3, P4.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the reading of one attachment got to.
+ *
+ * **`"unsupported"` is not a kind of `"failed"`.** A STEP file attached to a
+ * conversation is not a broken upload; it is geometry, and the detail says so
+ * and names what to do with it instead. Rendering the two the same way tells
+ * somebody their file is corrupt when it is fine.
+ */
+export type ExtractionStatus = "pending" | "ready" | "unsupported" | "failed";
+
+export interface AttachmentRead {
+  id: string;
+  conversation_id: string | null;
+  project_id: string | null;
+  media_id: string;
+  /** The user's own text. Never rendered as markup. */
+  filename: string;
+  detected_kind: string;
+  detected_format: string;
+  status: ExtractionStatus;
+  /** Why, for `unsupported` and `failed`. Server prose naming the next action. */
+  status_detail: string | null;
+  reader: string;
+  reliability: string;
+  /**
+   * The characters were *inferred* rather than transcribed, so the warning must
+   * be shown. Comes from the server rather than being re-derived here: a safety
+   * label with two implementations has two standards.
+   */
+  needs_confirmation: boolean;
+  created_at: string;
+  extracted_at: string | null;
+}
+
+export interface AttachmentPage {
+  items: AttachmentRead[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface ExtractedFragment {
+  kind: string;
+  text: string;
+  /** Where in the file, in the units that file has: page, sheet, cell, layer. */
+  where: string;
+  cite?: string;
+}
+
+export interface AttachmentExtraction {
+  attachment_id: string;
+  status: ExtractionStatus;
+  status_detail: string | null;
+  reader: string;
+  reliability: string;
+  /** The whole sentence, or `null` — never an empty string. */
+  unverified_note: string | null;
+  notes: string[];
+  /** More was read than is stored. Said rather than hidden. */
+  truncated: boolean;
+  fragment_count: number;
+  fragments: ExtractedFragment[];
+  /** Seen and deliberately not interpreted. Not errors — the read succeeded. */
+  unread: { what: string; why: string }[];
+  /**
+   * Fragments a reader classified as dimensions. **Candidate numbers and
+   * nothing more** — dimension and GD&T extraction is staged as later work, and
+   * nothing turns one of these into a design parameter automatically.
+   */
+  dimensions: ExtractedFragment[];
+}
+
+/** How to describe an attachment's state in one word a person can read. */
+export function extractionLabel(status: ExtractionStatus): string {
+  switch (status) {
+    case "pending":
+      return "Reading";
+    case "ready":
+      return "Read";
+    case "unsupported":
+      // Not "Failed". The file is fine; it is not a document.
+      return "Not a document";
+    case "failed":
+      return "Could not read";
+    default:
+      return status;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The design record (P5.3, P5.6)
+// ---------------------------------------------------------------------------
+
+/**
+ * One named decision the part is built from.
+ *
+ * `value` and `expression` are mutually exclusive and the backend enforces
+ * that: a parameter with an expression is a *consequence* of the others, and
+ * giving it a number would leave a formula in the design that no longer
+ * describes the value. That is also why the panel refuses to edit one — see
+ * `isDerived`.
+ */
+export interface SpecParameter {
+  name: string;
+  /** Absent on a derived parameter. */
+  value?: number | null;
+  /** Absent on a free one. Carries no leading `=`. */
+  expression?: string | null;
+  /** `"mm"`, `"deg"`, `"kg"`, `"mm2"`, `"mm3"`, or absent for a count/ratio. */
+  unit?: string;
+  description?: string;
+}
+
+/** One element the design creates, and how. */
+export interface SpecFeature {
+  name: string;
+  op: string;
+  args?: Record<string, unknown>;
+  /** A condition; the feature is skipped when false and stays in the design. */
+  when?: string | null;
+  /** Why this feature exists — the rationale slot, and the reason it is shown. */
+  note?: string;
+}
+
+/**
+ * `DesignSpec.to_dict()` as the backend emits it.
+ *
+ * Hand-mirrored like the rest of this file, and `format_version` is the one
+ * field that makes the staleness detectable rather than silent: a build reading
+ * a version it does not know refuses on the backend before this shape is ever
+ * produced.
+ */
+export interface DesignDocument {
+  format_version: number;
+  name: string;
+  description?: string;
+  material?: string | null;
+  parameters: SpecParameter[];
+  features: SpecFeature[];
+}
+
+export interface DesignRead {
+  id: string;
+  conversation_id: string;
+  project_id: string | null;
+  name: string;
+  /** The identity of this design version. Two specs with this digest are one design. */
+  digest: string;
+  revision_number: number;
+  document: DesignDocument;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DesignRevision {
+  id: string;
+  revision_number: number;
+  digest: string;
+  /** Empty on revision 1 — it changed nothing, it *is* the beginning. */
+  summary: string;
+  /** `"user"` or `"agent"`. Null `author_id` means the agent, not "unknown". */
+  author: string;
+  author_id: string | null;
+  created_at: string;
+}
+
+export interface DesignRevisionPage {
+  items: DesignRevision[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface DesignEdited {
+  design: DesignRead;
+  /** False when the edit set a parameter to what it already was. */
+  changed: boolean;
+  /** The `SpecDiff` shape `components/gates/spec-diff.tsx` already renders. */
+  diff: Record<string, unknown> | null;
+}
+
+/**
+ * Can this parameter be edited?
+ *
+ * A derived parameter is a consequence, and the backend refuses to set one with
+ * the formula named. Asking here as well is not a duplicated rule — it is the
+ * difference between a disabled field with an explanation and a field that
+ * accepts a number and then errors.
+ */
+export function isDerived(parameter: SpecParameter): boolean {
+  return typeof parameter.expression === "string" && parameter.expression.length > 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,12 @@ import type {
   MfaEnrolment,
   AccountLifecycle,
   AnnouncementLevel,
+  AttachmentExtraction,
+  AttachmentPage,
+  AttachmentRead,
+  DesignEdited,
+  DesignRead,
+  DesignRevisionPage,
   FeatureFlag,
   ApiReference,
   FleetHealth,
@@ -327,6 +333,91 @@ export const api = {
   apiReference: () => request<ApiReference>("/handbook/reference"),
   /** Is Kryova working, and what happened recently. Carries no fleet numbers. */
   serviceStatus: () => request<ServiceStatus>("/status"),
+
+  // --- Attachments (P4.1, P4.3, P4.6) --------------------------------------
+
+  /**
+   * Hand an already-uploaded blob to a conversation, and read it.
+   *
+   * Two steps on purpose: the bytes go up through the chunked-upload path,
+   * which is resumable and content-addressed, and this says what they are for.
+   * Answers `201` whatever the reading produced — an unsupported format is a
+   * recorded outcome, not a failed request, because refusing would lose the
+   * fact that the user handed us something.
+   */
+  createAttachment: (body: {
+    media_id: string;
+    conversation_id?: string | null;
+    project_id?: string | null;
+    filename?: string;
+  }) =>
+    mutatingRequest<AttachmentRead>("/attachments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  /**
+   * This conversation's attachments, newest first.
+   *
+   * Deliberately complete: the ones that could not be read are in it. A panel
+   * that omitted the STEP file somebody dropped in would leave them wondering
+   * whether it uploaded at all.
+   */
+  listAttachments: (conversationId?: string | null) => {
+    const suffix = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : "";
+    return request<AttachmentPage>(`/attachments${suffix}`);
+  },
+
+  /**
+   * What was read out of one file, with a citation on every fragment.
+   *
+   * Not the file — the media routes own downloading that. The "unverified
+   * read" warning is part of *this* response rather than something the client
+   * decides to add: a wrongly read tolerance is worse than an unread one, so
+   * the label travels with the content.
+   */
+  readExtraction: (attachmentId: string) =>
+    request<AttachmentExtraction>(`/attachments/${attachmentId}/content`),
+
+  deleteAttachment: (attachmentId: string) =>
+    mutatingRequest<void>(`/attachments/${attachmentId}`, { method: "DELETE" }),
+
+  // --- The design record (P5.3, P5.6) --------------------------------------
+
+  /**
+   * The specification for one conversation, spec inline.
+   *
+   * Addressed by conversation rather than by a design id, which is not an
+   * accident of URL design: ownership is `conversation.owner_id`, one check in
+   * one place, and an id-addressed route would need a second check that could
+   * disagree with it. Answers `404` before the agent has written one down.
+   */
+  readDesign: (conversationId: string) => request<DesignRead>(`/designs/${conversationId}`),
+
+  /** The design's history, newest first — what changed and who changed it. */
+  listDesignRevisions: (conversationId: string, page = 1) =>
+    request<DesignRevisionPage>(`/designs/${conversationId}/revisions?page=${page}`),
+
+  /**
+   * Change one number in the design (P5.6's "edit a parameter mid-mission").
+   *
+   * There is deliberately no way to send a whole spec: a client-authored design
+   * is one the server never compiled, and the first malformed one would arrive
+   * as a compile error against a revision already written. A *derived*
+   * parameter comes back `422` carrying the formula it is derived from — the
+   * panel disables those fields, so reaching this is a bug rather than a user
+   * error, and the message is the one worth showing when it happens.
+   */
+  setDesignParameter: (conversationId: string, name: string, value: number) =>
+    mutatingRequest<DesignEdited>(
+      `/designs/${conversationId}/parameters/${encodeURIComponent(name)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      },
+    ),
 
   // --- Approval gates (P5.5) -----------------------------------------------
 

@@ -78,6 +78,7 @@ src/
         simulations/[simulationId]/   poll job, render results + WebGL viewer
   components/     chat/{chat-view,composer,catia-chip,attach-pill,resume-notice,copy-button},
                   verification/{verification-panel,cost-notice}, gates/{spec-diff},
+                  design/{spec-panel}, attachments/{attachment-panel},
                   onboarding/{first-run}, simulate/{stop-run-button},
                   simulate/{fixture-editor,load-editor,selector-fields,vector-field},
                   catia/{device-manager}, catia-bridge-panel,
@@ -147,6 +148,56 @@ reads a factor of safety.
 P8's one-meter rule reaching the screen: the number comes from the meter that bills, and
 assembling our own from `units` and `unit` would be a second place for the wording — and the
 honesty — to drift. Too little history is shown as such, never as zero and never hidden.
+
+**The spec panel is the design, and it sits above the picture** (`components/design/spec-panel.tsx`,
+P5.3). The backend persists a `DesignSpec` now — one document per conversation with an append-only
+revision chain — so the panel renders it beside the composer with its parameters editable. Order
+matters: spec, then attachments, then the render. The conversation is the log, the spec is the
+truth, the attachments are the evidence behind it and the render is the consequence.
+
+**A derived parameter shows its formula instead of an input.** The backend refuses to set one, and
+a disabled box with no reason reads as a bug — `= thick_mm / 2` says what to change *instead*,
+which an error after submit does not. The panel computes nothing: it renders the diff the server
+returns, and names the `downstream` features by name, because those are the ones nobody edited that
+stand on something that was.
+
+**The field is keyed on the stored value, not synced by an effect.** `key={name:value}` remounts it
+when the server moves the number — the agent can change a parameter mid-turn, and a field still
+showing what the reader typed two minutes ago lets them commit over a change they never saw. An
+effect calling `setState` is what this repo's `react-hooks/set-state-in-effect` rule refuses, and
+it is right to.
+
+**`token` events are for display; `message` is the answer** (`lib/agent-stream.ts`, P5.1). A
+provider that cannot stream emits **no** deltas — so an empty `streamingText` is honest rather than
+a missing feature, and concatenating deltas into an answer would build a second copy that drifts.
+The streamed text renders as plain text, never markdown: half a fenced block is not a fenced block,
+and a parser asked to read one mid-word produces a paragraph that reshapes itself on every chunk.
+
+**A dropped stream reconnects with `resumeAgent`, and it is a GET.** Reconnecting with a POST would
+start a *second* turn, so a flaky connection would double every message it interrupted. The hook
+keeps the last `seq` it saw in a ref (not state — the `catch` fires with whatever `run` closed
+over) and hands it back as `?after=`. `resume_gap` means the events aged out: reload the
+conversation, whose transcript is complete. That is an honest outcome and not an error — saying
+"the agent failed" about a turn that very likely succeeded is the worse of the two wrong answers.
+
+**A running solve shows a stage, never a bar** (`describeProgress`, P5.2). CalculiX reports one
+increment for a linear-static run, so a percentage would be invented, and an invented bar over a
+twenty-minute solve teaches somebody to predict a finish time nobody measured. A convergence study
+has countable grids and says "grid 2 of 3"; a count of one is not rendered at all.
+
+**"Not a document" is not "failed"** (`components/attachments/attachment-panel.tsx`, P4.6). A STEP
+file in the document slot is geometry — the file is fine, it is in the wrong place, and the detail
+says which. It renders amber; a genuine read failure renders red. The list is deliberately
+*complete*, including what could not be read: "why is my STEP file not in the list" is a much
+harder question than "why does it say not a document".
+
+**The unverified-read warning comes from the server and sits above the content.** `a wrongly read
+tolerance is worse than an unread one`, so a safety label with two implementations has two
+standards — the sentence is `unverified_note` on the API response, `null` when it does not apply
+and never an empty string. It renders above the extracted text for the same reason the verification
+summary sits above the result numbers. **There is deliberately no "use this value" button** on an
+extracted dimension: those are candidate readings, and applying one would be the product acting on
+an unverified number.
 
 **`/docs` and `/status` are public, like `/trust` and `/shared/[token]`.** Documentation behind a
 login can only be read by people who already bought, and a status page only its operator can read
@@ -365,3 +416,10 @@ this code has actually shipped, so they are the ones to check for in review.
 - Don't paint an unmeasured assertion or an unconverged number green
 - Don't write docs content into `/docs` — it is derived from `app/handbook/`, where the guides'
   routes are checked against the running router
+- Don't concatenate `token` events into an answer — the `message` event carries it, and a
+  non-streaming provider sends no tokens at all
+- Don't reconnect to a dropped turn with a POST; `resumeAgent` is a GET so it cannot start a second
+  one
+- Don't render a progress bar for a solve, or a "use this value" action on an extracted dimension —
+  both would present an invented number as a measured one
+- Don't sync an input to a prop with an effect; key the component on the stored value instead

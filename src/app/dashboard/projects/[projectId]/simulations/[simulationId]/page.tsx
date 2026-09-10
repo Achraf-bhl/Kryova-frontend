@@ -20,7 +20,12 @@ import {
   type PollScheduleState,
 } from "@/lib/poll-schedule";
 import type { SurfaceFieldArrays } from "@/lib/surface-field";
-import { isTerminalStatus, jobStatusLabel, type SimulationRead } from "@/types/api";
+import {
+  describeProgress,
+  isTerminalStatus,
+  jobStatusLabel,
+  type SimulationRead,
+} from "@/types/api";
 
 /** The padded container the dashboard layout no longer imposes — see PageShell. */
 export default function SimulationPage() {
@@ -162,7 +167,15 @@ function SimulationDetail() {
         <div className="flex flex-wrap items-center gap-3 rounded-lg bg-surface p-5 shadow-card">
           <span className="size-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <span className="text-sm text-muted">
-            Meshing and solving — this page will update automatically.
+            {/* The stage this run has actually reported (P5.2), falling back to
+                the old sentence until it reports one. Deliberately not a
+                progress bar: for a linear-static solve there is nothing inside
+                the stage to count, and a made-up percentage over a
+                twenty-minute solve teaches a reader to predict a finish time
+                nobody measured. A convergence study *does* have countable
+                grids, and says so. */}
+            {describeProgress(simulation.progress) || "Meshing and solving"} — this page will
+            update automatically.
           </span>
           <div className="ml-auto">
             <StopRunButton

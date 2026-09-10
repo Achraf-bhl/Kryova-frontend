@@ -10,6 +10,8 @@ import { Composer } from "@/components/chat/composer";
 import { CopyButton } from "@/components/chat/copy-button";
 import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
+import { AttachmentPanel } from "@/components/attachments/attachment-panel";
+import { SpecPanel } from "@/components/design/spec-panel";
 import { KernelPartView } from "@/components/kernel-part-view";
 import { MeshOrb } from "@/components/mesh-orb";
 import { PartIcon } from "@/components/ui/icons";
@@ -139,6 +141,7 @@ export function ChatView({
     liveSteps,
     thinking,
     narration,
+    streamingText,
     send,
     retry,
     stop,
@@ -199,7 +202,7 @@ export function ChatView({
     ref: scrollRef,
     pinned,
     scrollToBottom,
-  } = useStickToBottom([turns, liveSteps, narration, busy]);
+  } = useStickToBottom([turns, liveSteps, narration, streamingText, busy]);
 
   const submit = useCallback(() => {
     const message = input.trim();
@@ -363,6 +366,14 @@ export function ChatView({
               <AgentStepList steps={liveSteps} thinking={thinking} />
             )}
             {narration && <p className="text-sm italic text-muted">{narration}</p>}
+            {/* The answer arriving token by token (P5.1). Plain text, not
+                markdown: half a fenced block is not a fenced block, and a
+                renderer asked to parse one mid-word produces a paragraph that
+                reshapes itself on every chunk. The `message` event replaces
+                this with the parsed, finished answer. */}
+            {streamingText && (
+              <p className="whitespace-pre-wrap text-sm leading-relaxed">{streamingText}</p>
+            )}
           </div>
         )}
       </div>
@@ -412,7 +423,19 @@ export function ChatView({
               later part. Renders nothing at all unless the open kernel is what
               builds here — see `lib/kernel-render.ts`. */}
           {liveConversationId !== null && (
-            <div className="mb-2">
+            <div className="mb-2 space-y-2">
+              {/* The spec above the picture, deliberately. The conversation is
+                  the log and the spec is the truth, and a panel that put the
+                  render first would put the *consequence* above the thing that
+                  decides it. Renders nothing until a design has been recorded —
+                  most conversations never record one, and a permanent "no
+                  design" box above every composer is furniture. */}
+              <SpecPanel conversationId={liveConversationId} revision={partRevision} />
+              {/* What the user handed over, beneath the design and above the
+                  picture: the spec is the truth, the attachments are the
+                  evidence behind it, and the render is the consequence.
+                  Renders nothing until something is attached. */}
+              <AttachmentPanel conversationId={liveConversationId} revision={partRevision} />
               <KernelPartView
                 conversationId={liveConversationId}
                 state={partState}

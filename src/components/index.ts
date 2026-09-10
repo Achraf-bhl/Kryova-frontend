@@ -1,10 +1,12 @@
 export { AgentStepList, type StepView } from "./agent-step-list";
+export { AttachmentPanel } from "./attachments/attachment-panel";
 export { CatiaBridgePanel } from "./catia-bridge-panel";
 export { CatiaDeviceManager } from "./catia/device-manager";
 export { AttachPill } from "./chat/attach-pill";
 export { CatiaChip } from "./chat/catia-chip";
 export { ChatView } from "./chat/chat-view";
 export { Composer } from "./chat/composer";
+export { SpecPanel } from "./design/spec-panel";
 export { ErrorBoundary } from "./error-boundary";
 export { GeometryPreview } from "./geometry-preview";
 export { MarkdownMessage } from "./markdown-message";

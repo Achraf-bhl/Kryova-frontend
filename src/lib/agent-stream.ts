@@ -70,7 +70,42 @@ export type AgentEvent =
    * the union because it is on the wire — see `app/api/routes/ai.py`.
    */
   | { type: "title"; title: string }
+  /**
+   * A piece of the assistant's answer as it is being written (P5.1).
+   *
+   * **Not the answer.** The `message` event that follows carries the real text,
+   * and a reader that concatenated these deltas instead would be maintaining a
+   * second copy that drifts — on a provider that streams a corrected token, and
+   * on every provider that streams nothing at all (`stream_chat`'s default
+   * emits no deltas on purpose, so a non-streaming provider is not mistaken for
+   * a model that wrote its answer in one go). Render these; keep `message`.
+   */
+  | { type: "token"; content: string }
+  /**
+   * The live events for this turn are no longer kept, so a resume cannot fill
+   * the hole. The transcript is complete — reload the conversation. Sent by
+   * `GET /ai/conversations/{id}/stream`, never by a fresh turn.
+   */
+  | { type: "resume_gap"; after: number; message: string }
+  /** Nothing has arrived for two minutes on a resumed stream. */
+  | { type: "resume_idle"; after: number; message: string }
   | { type: "error"; message: string };
+
+/**
+ * Every event carries these once it has been through the resume buffer.
+ *
+ * `seq` is the cursor: the last one seen is what a reconnect passes as `after`.
+ * It is optional because the backend deliberately still sends the event when
+ * recording it failed — losing the resume buffer costs a reader a reload, and
+ * losing the turn costs them the work, so the turn wins. A missing `seq` means
+ * "cannot resume from here", which is the truth rather than a guess.
+ */
+export interface EventCursor {
+  seq?: number;
+  turn_id?: string;
+}
+
+export type CursoredEvent = AgentEvent & EventCursor;
 
 export interface ChatRequest {
   message: string;
@@ -84,10 +119,16 @@ function csrfToken(): string | null {
   return document.cookie.match(/(?:^|;\s*)kryova_csrf=([^;]+)/)?.[1] ?? null;
 }
 
-/** Stream one agent turn, invoking `onEvent` as each event arrives. */
+/**
+ * Stream one agent turn, invoking `onEvent` as each event arrives.
+ *
+ * `onEvent` receives the cursor along with the event. Hold on to the last `seq`
+ * you saw: if this promise rejects with a network failure mid-turn, `resumeAgent`
+ * picks the same turn back up from there rather than losing it until it ends.
+ */
 export async function streamAgent(
   payload: ChatRequest,
-  onEvent: (event: AgentEvent) => void,
+  onEvent: (event: CursoredEvent) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   const headers = new Headers({
@@ -119,7 +160,55 @@ export async function streamAgent(
   }
   if (!response.body) throw new Error("The agent returned no stream.");
 
-  const reader = response.body.getReader();
+  await readFrames(response.body, onEvent);
+}
+
+/**
+ * Rejoin a turn already in flight, from the last cursor seen (P5.1).
+ *
+ * A `GET`, and that is what makes it a resume rather than a second turn:
+ * reconnecting with a POST would start the agent again, so a client whose
+ * connection dropped would double every turn it lost. This runs no agent and
+ * writes no message — it replays what was recorded and then follows.
+ *
+ * Pass `after: 0` when there is no cursor to resume from; the backend sends
+ * whatever it still holds. If the events have aged out it answers `resume_gap`
+ * rather than a turn with a silent hole in the middle, and the right response
+ * to that is to reload the conversation, whose transcript is complete.
+ */
+export async function resumeAgent(
+  conversationId: string,
+  after: number,
+  onEvent: (event: CursoredEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const response = await fetchWithRefresh(
+    `/ai/conversations/${conversationId}/stream?after=${after}`,
+    { headers: { "x-requested-with": "kryova" }, credentials: "include", signal },
+  );
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as { detail?: string };
+    throw new Error(body.detail ?? `Could not rejoin the turn (${response.status}).`);
+  }
+  if (!response.body) throw new Error("The agent returned no stream.");
+
+  await readFrames(response.body, onEvent);
+}
+
+/**
+ * The SSE frame loop, shared by a fresh turn and a resumed one.
+ *
+ * Shared deliberately: a replayed event is byte-identical to the one that went
+ * out live — the backend stores the payload exactly as it sent it — so a second
+ * parser here would be a second chance for the two paths to disagree about
+ * what the client saw.
+ */
+async function readFrames(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (event: CursoredEvent) => void,
+): Promise<void> {
+  const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
 
@@ -134,10 +223,13 @@ export async function streamAgent(
     buffer = frames.pop() ?? "";
 
     for (const frame of frames) {
+      // `id:` lines are read from the payload's own `seq` instead: the backend
+      // puts the cursor in both places, and taking it from the JSON keeps one
+      // parser rather than two that can disagree about a frame.
       const line = frame.split("\n").find((l) => l.startsWith("data:"));
       if (!line) continue;
       try {
-        onEvent(JSON.parse(line.slice(5).trim()) as AgentEvent);
+        onEvent(JSON.parse(line.slice(5).trim()) as CursoredEvent);
       } catch (error) {
         // A malformed frame should not kill a run that is otherwise working --
         // but it must not vanish either. Swallowed silently, a truncated or
