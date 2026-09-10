@@ -1,5 +1,6 @@
 import Link from "next/link";
 
+import { FirstRunChecklist } from "@/components/onboarding/first-run";
 import { PageShell } from "@/components/ui/page-shell";
 import { fetchProjectPage } from "@/lib/server-api";
 
@@ -28,6 +29,12 @@ export default async function ProjectsPage() {
           New chat
         </Link>
       </div>
+
+      {/* P10.1. Renders nothing once there is a succeeded run, and needs no
+          dismiss button — every tick is derived from what the account actually
+          contains, so it cannot be ticked by somebody who has done none of it,
+          and it cannot be hidden from somebody who is still stuck. */}
+      <FirstRunChecklist />
 
       {projects.length === 0 ? (
         <div className="k-panel p-8 text-center">

@@ -1,15 +1,39 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/lib/auth-context";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 
+/**
+ * `useSearchParams` opts this into request-time rendering; the Suspense
+ * boundary keeps the shell prerendered. Same pattern and same build-time reason
+ * as the login page.
+ */
 export default function RegisterPage() {
+  return (
+    <Suspense fallback={<RegisterHeading />}>
+      <RegisterForm />
+    </Suspense>
+  );
+}
+
+function RegisterHeading() {
+  return (
+    <div>
+      <h1 className="text-xl font-semibold">Create an account</h1>
+      <p className="mt-1 text-sm text-muted">Upload CAD, define loads, and solve FEA.</p>
+    </div>
+  );
+}
+
+function RegisterForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { register } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -22,8 +46,18 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
     try {
+      // A brand-new account cannot have a second factor, so `register` never
+      // returns a challenge here. The value is ignored rather than asserted:
+      // pretending to handle a case that cannot happen is noise, and the type
+      // already says it might.
       await register(email, password, fullName);
-      router.push("/dashboard");
+      // `?next=` was dead on this page until P2.6, which broke the invitation
+      // flow specifically: "create an account with the address the invitation
+      // was sent to" landed on the dashboard with the token discarded, and the
+      // only symptom was a user insisting they had clicked the link.
+      // `safeRedirectPath` is what stops the parameter becoming an open
+      // redirect — the same guard the login page uses.
+      router.push(safeRedirectPath(searchParams.get("next")));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -33,10 +67,7 @@ export default function RegisterPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-xl font-semibold">Create an account</h1>
-        <p className="mt-1 text-sm text-muted">Upload CAD, define loads, and solve FEA.</p>
-      </div>
+      <RegisterHeading />
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <Input
           id="fullName"
@@ -71,7 +102,10 @@ export default function RegisterPage() {
       </form>
       <p className="text-sm text-muted">
         Already have an account?{" "}
-        <Link href="/login" className="font-medium text-primary hover:underline">
+        <Link
+          href={`/login${searchParams.get("next") ? `?next=${encodeURIComponent(searchParams.get("next") ?? "")}` : ""}`}
+          className="font-medium text-primary hover:underline"
+        >
           Sign in
         </Link>
       </p>

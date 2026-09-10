@@ -41,6 +41,12 @@ const BASE_SIMULATION: Omit<SimulationRead, "status" | "result" | "error"> = {
   created_at: "2026-08-27T00:00:00Z",
   started_at: "2026-08-27T00:00:01Z",
   finished_at: "2026-08-27T00:00:02Z",
+  element_order: 1,
+  // 1 grid, which is `single-grid` and is never `converged` — the honest
+  // default, and the state most fixtures should be in.
+  grids: 1,
+  analysis: "linear-static",
+  thickness_mm: null,
 };
 
 const SURFACE: SurfaceField = {

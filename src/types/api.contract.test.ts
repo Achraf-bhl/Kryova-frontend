@@ -36,11 +36,18 @@ import {
  *       RUNNING = "running"
  *       SUCCEEDED = "succeeded"
  *       FAILED = "failed"
+ *       CANCELLED = "cancelled"      # added 2026-09-10, P5.6
  *
  * Pydantic serialises a str-enum by value, so these are the strings that
  * actually arrive over the wire.
  */
-const BACKEND_JOB_STATUS_VALUES = ["queued", "running", "succeeded", "failed"] as const;
+const BACKEND_JOB_STATUS_VALUES = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
 
 describe("JobStatus matches the backend enum", () => {
   it("accepts every value the API can send", () => {
@@ -53,12 +60,25 @@ describe("JobStatus matches the backend enum", () => {
     }
   });
 
-  it("treats exactly succeeded and failed as terminal", () => {
-    expect([...TERMINAL_JOB_STATUSES].sort()).toEqual(["failed", "succeeded"]);
+  it("treats exactly succeeded, failed and cancelled as terminal", () => {
+    expect([...TERMINAL_JOB_STATUSES].sort()).toEqual(["cancelled", "failed", "succeeded"]);
     expect(isTerminalStatus("succeeded")).toBe(true);
     expect(isTerminalStatus("failed")).toBe(true);
+    // P5.6. Terminal because a stopped run never changes again -- and if this
+    // were false, the results page would poll a finished job until the
+    // 30-minute ceiling, which is the exact shape of the uppercase bug above.
+    expect(isTerminalStatus("cancelled")).toBe(true);
     expect(isTerminalStatus("queued")).toBe(false);
     expect(isTerminalStatus("running")).toBe(false);
+  });
+
+  it("does not render a stopped run as a failed one", () => {
+    // Two different facts. A failure is the product not working; a cancellation
+    // is the product doing what it was told. `app/models/simulation.py` says
+    // the same thing on the enum member itself, and a UI that grouped them
+    // would put a user changing their mind into the fleet's failure rate.
+    expect(jobStatusLabel("cancelled")).toBe("Stopped");
+    expect(jobStatusLabel("cancelled")).not.toBe(jobStatusLabel("failed"));
   });
 
   it("does not silently accept the uppercase spelling that shipped broken", () => {
@@ -76,12 +96,15 @@ describe("JobStatus matches the backend enum", () => {
     expect(jobStatusLabel("running")).toBe("Solving");
     expect(jobStatusLabel("succeeded")).toBe("Succeeded");
     expect(jobStatusLabel("failed")).toBe("Failed");
+    expect(jobStatusLabel("cancelled")).toBe("Stopped");
   });
 
   it("passes an unrecognised status straight through rather than throwing", () => {
     // Forward compatibility: a new backend status should degrade to showing
-    // its raw value, not crash the results page.
-    expect(jobStatusLabel("cancelled")).toBe("cancelled");
-    expect(isTerminalStatus("cancelled")).toBe(false);
+    // its raw value, not crash the results page. This used to use "cancelled",
+    // which stopped being hypothetical on 2026-09-10 -- so it needs a status
+    // that is still imaginary, or the test quietly checks nothing.
+    expect(jobStatusLabel("superseded")).toBe("superseded");
+    expect(isTerminalStatus("superseded")).toBe(false);
   });
 });

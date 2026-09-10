@@ -1,4 +1,4 @@
-export { Button } from "./button";
+export { Button, ButtonLink } from "./button";
 export { Input } from "./input";
 export { PageShell } from "./page-shell";
 export { Pill } from "./pill";

@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { DeviceList } from "@/components/account/device-list";
+import { TwoFactor } from "@/components/account/two-factor";
+import { VerifyEmailNotice } from "@/components/account/verify-email-notice";
 import { CatiaDeviceManager } from "@/components/catia/device-manager";
 import { PageShell } from "@/components/ui/page-shell";
 import { api } from "@/lib/api-client";
@@ -45,9 +48,34 @@ export default function SettingsPage() {
       <div>
         <h1 className="font-display text-2xl font-semibold">Settings</h1>
         <p className="text-sm text-muted">
-          The model behind the agent, and the workstation it drives CATIA on.
+          Your account and its security, the model behind the agent, and the workstation it
+          drives CATIA on.
         </p>
       </div>
+
+      {/* Renders nothing once the address is confirmed. */}
+      <VerifyEmailNotice />
+
+      <section id="security" className="scroll-mt-6 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-accent">Two-factor authentication</h2>
+          <p className="mt-1 max-w-prose text-sm text-muted">
+            A code from your phone in addition to your password.
+          </p>
+        </div>
+        <TwoFactor />
+      </section>
+
+      <section id="devices" className="scroll-mt-6 space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold text-accent">Signed-in devices</h2>
+          <p className="mt-1 max-w-prose text-sm text-muted">
+            Each sign-in is its own session. Ending one here revokes it on the server
+            immediately — it is not a list, it is the truth.
+          </p>
+        </div>
+        <DeviceList />
+      </section>
 
       {/* The anchor the composer's CATIA chip and the bridge panel link to. */}
       <section id="catia" className="scroll-mt-6 space-y-3">

@@ -1,13 +1,20 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CatiaBridgePanel } from "@/components/catia-bridge-panel";
+import { SharePanel, TransferPanel } from "@/components/sharing/share-panel";
+import { api } from "@/lib/api-client";
 import { uploadGeometryFile } from "@/lib/chunked-upload";
 import { formatBytes, statusColor } from "@/lib/format";
-import type { GeometryVersionRead, ProjectRead, SimulationRead } from "@/types/api";
+import type {
+  GeometryVersionRead,
+  OrganisationMembership,
+  ProjectRead,
+  SimulationRead,
+} from "@/types/api";
 
 function getLoadCaseName(simulation: SimulationRead): string {
   if (simulation.load_case && typeof simulation.load_case === "object" && "name" in simulation.load_case) {
@@ -30,6 +37,18 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Loaded here rather than inside `TransferPanel` so the panel stays a pure
+  // presentation of a decision the page has already made: with fewer than two
+  // teams there is nowhere to move a project to, and it renders nothing.
+  const [organisations, setOrganisations] = useState<OrganisationMembership[]>([]);
+
+  useEffect(() => {
+    api
+      .listOrganisations()
+      .then((page) => setOrganisations(page.items))
+      // Silent: a project page that cannot list teams still does its job.
+      .catch(() => setOrganisations([]));
+  }, []);
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -149,6 +168,10 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
           </ul>
         )}
       </section>
+
+      <SharePanel projectId={projectId} />
+
+      <TransferPanel projectId={projectId} organisations={organisations} />
 
       {/* Moved out of the top slot: whether a workstation is connected matters
           when you are about to ask for geometry, not above a list of files. The

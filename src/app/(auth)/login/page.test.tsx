@@ -95,3 +95,112 @@ describe("LoginPage", () => {
     expect(localStorage.length).toBe(0);
   });
 });
+
+/**
+ * P1.7. `/auth/login` now answers with a session **or** a challenge, and this
+ * is the one route where reading one as the other means showing a signed-out
+ * person a dashboard.
+ */
+describe("LoginPage when the account has a second factor", () => {
+  const challenge = {
+    mfa_required: true,
+    challenge_token: "challenge-abc",
+    expires_in_seconds: 300,
+    recovery_available: true,
+  };
+
+  it("asks for a code instead of navigating", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 202, json: async () => challenge });
+    renderLoginPage();
+    await fillCredentials(user);
+
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(await screen.findByLabelText("Six-digit code")).toBeInTheDocument();
+    // The whole point: a challenge must not be mistaken for a session.
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("unmounts the password field rather than hiding it", async () => {
+    // A browser autofilling a hidden password input on the code step is how a
+    // password gets submitted to the wrong endpoint.
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 202, json: async () => challenge });
+    renderLoginPage();
+    await fillCredentials(user);
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await screen.findByLabelText("Six-digit code");
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  });
+
+  it("mentions recovery codes only when some are left", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 202,
+      json: async () => ({ ...challenge, recovery_available: false }),
+    });
+    renderLoginPage();
+    await fillCredentials(user);
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await screen.findByLabelText("Six-digit code");
+    // Offering a route that cannot work is worse than not offering it.
+    expect(screen.queryByText(/recovery code/i)).not.toBeInTheDocument();
+  });
+
+  it("navigates once the code is accepted", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => challenge })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          user: {
+            id: "1",
+            email: "e",
+            full_name: null,
+            is_active: true,
+            created_at: "now",
+            is_verified: true,
+          },
+          csrf_token: "csrf",
+        }),
+      });
+    renderLoginPage();
+    await fillCredentials(user);
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    await user.type(await screen.findByLabelText("Six-digit code"), "123456");
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+  });
+
+  it("keeps the user on the code step and clears the field when the code is wrong", async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => challenge })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        json: async () => ({ detail: "That code is not valid." }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 401 });
+    renderLoginPage();
+    await fillCredentials(user);
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    const field = await screen.findByLabelText("Six-digit code");
+    await user.type(field, "000000");
+    await user.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect(await screen.findByText("That code is not valid.")).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+    // Cleared, so the next attempt does not append to a stale six digits.
+    await waitFor(() => expect(field).toHaveValue(""));
+  });
+});

@@ -82,6 +82,16 @@ export function HistoryIcon(props: IconProps) {
   );
 }
 
+export function TeamIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M16 19v-1.5a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3V19" />
+      <circle cx="9.5" cy="8" r="3" />
+      <path d="M21 19v-1.5a3 3 0 0 0-2.25-2.9M16.5 5.2a3 3 0 0 1 0 5.6" />
+    </Svg>
+  );
+}
+
 export function SettingsIcon(props: IconProps) {
   return (
     <Svg {...props}>

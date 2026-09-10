@@ -28,7 +28,7 @@ pnpm/npm install       (npm is what the lockfile tracks — package-lock.json)
 npm run dev            dev server
 npm run build          production build
 npm start              serve the build
-npm run test           vitest run  (323 tests, ~7s)
+npm run test           vitest run  (384 tests, ~9s)
 npm run lint           eslint
 npx tsc --noEmit       typecheck
 npm run setup          scripts/setup.mjs — checks Node, installs, writes .env.local, builds
@@ -62,25 +62,32 @@ src/
   proxy.ts                            Next 16 middleware — cookie route gate
   app/
     layout.tsx  page.tsx  globals.css
-    (auth)/{login,register}/          route group, unauthenticated shell
+    (auth)/{login,register,verify-email}/  route group, unauthenticated shell
     setup/                            health-check + onboarding wizard
+    docs/                             public docs site — guides, mission gallery, API reference
+    status/                           public status page + incident history
     dashboard/
       layout.tsx                      server auth gate + persistent sidebar shell
       page.tsx                        chat home — new conversation (the front door)
       c/[conversationId]/             one conversation, rehydrated server-side
-      projects/  runs/  files/  history/  settings/
+      projects/  runs/  files/  history/  settings/  approvals/
       _components/                    sidebar, conversation row, sign-out
       projects/[projectId]/
         page.tsx                      geometry versions + simulation list
         simulate/page.tsx             load-case editor → POST simulation
         simulations/[simulationId]/   poll job, render results + WebGL viewer
   components/     chat/{chat-view,composer,catia-chip,attach-pill,resume-notice,copy-button},
+                  verification/{verification-panel,cost-notice}, gates/{spec-diff},
+                  onboarding/{first-run}, simulate/{stop-run-button},
                   simulate/{fixture-editor,load-editor,selector-fields,vector-field},
                   catia/{device-manager}, catia-bridge-panel,
+                  account/{device-list,two-factor,verify-email-notice},
                   agent-chat, agent-step-list, markdown-message, mesh-orb, tool-image,
                   kernel-part-view, result-interpretation, geometry-preview,
                   webgl-stress-viewer, error-boundary, skeleton, index.ts (barrel),
                   ui/{button,input,select,pill,page-shell,icons,index.ts}
+                  (button.tsx exports Button *and* ButtonLink — a navigation that
+                   looks like a button is a real <a>, so middle-click works)
   hooks/          use-agent-chat.ts, use-catia-status.ts, use-stick-to-bottom.ts
   lib/            api-client.ts, server-api.ts, auth-context.tsx, agent-stream.ts,
                   catia-events.ts, markdown.ts, chunked-upload.ts, safe-redirect.ts,
@@ -114,6 +121,45 @@ it draws the document as it stands — so the OCCT picture is pinned above the c
 CATIA chip, never in the transcript, because a copy sitting next to turn 3 would silently redraw
 itself into turn 9's part. Which of the two is live is read off `GET /catia/status`.
 
+**Stopping a turn is two presses, and they do different things (P5.6).** The first posts
+`POST /ai/conversations/{id}/cancel` and **keeps listening**: the agent loop ends at its next
+step boundary, writes "Stopped at your request" into the transcript and closes the stream itself
+with `stop_reason: "cancelled"`. The second press aborts the fetch, which is what the button used
+to do on the first press — and its own comment admitted "stopping the stream does not stop the
+seat", because the agent carried on driving CATIA with nobody watching. Keep the polite path
+first; the abort is the escape hatch for a stream that has gone quiet. A turn the *user* stopped
+renders in muted grey, never amber: nothing went wrong.
+
+**`JobStatus` has five members and `cancelled` is not a kind of `failed`.** A failure is the
+product not working; a cancellation is it doing what it was told. Anything that groups them puts
+a user who changed their mind into the fleet's failure rate. `cancelled` **is** terminal — if it
+were not, the results page would poll a finished job until the 30-minute ceiling, which is the
+same shape as the uppercase-status bug `types/api.contract.test.ts` exists for.
+
+**Unmeasured is amber and never green** (`components/verification/`). That is Decision 3
+rendered. A single-grid solve holds no evidence about its own discretisation error, however fine
+the mesh, so `converged` is the only state that earns green — measured at gate G1, where a factor
+of safety of 1303 came off one 411-element tet4 mesh. The verification summary sits **above** the
+result numbers, not below them: "can this be leaned on" is a question to answer before somebody
+reads a factor of safety.
+
+**The cost notice renders the backend's `sentence` and does no arithmetic** (`cost-notice.tsx`).
+P8's one-meter rule reaching the screen: the number comes from the meter that bills, and
+assembling our own from `units` and `unit` would be a second place for the wording — and the
+honesty — to drift. Too little history is shown as such, never as zero and never hidden.
+
+**`/docs` and `/status` are public, like `/trust` and `/shared/[token]`.** Documentation behind a
+login can only be read by people who already bought, and a status page only its operator can read
+is a private dashboard. Everything on them is derived server-side from something that cannot
+drift — the mission gallery from the ladder, the API reference from the OpenAPI document, the
+guides' routes checked against the running router — so **do not hand-write content into these
+pages**; add it to `app/handbook/` in the backend where the checks reach it.
+
+**The onboarding checklist has no dismiss button and no stored flag**
+(`components/onboarding/first-run.tsx`), on purpose. Every tick is derived from what the account
+contains, and a *succeeded* run — not a started one. A flag-driven checklist can be fully ticked
+by somebody who has done none of it, and dismissed by somebody who is still stuck.
+
 **`CatiaStatus` is a three-way union and `connected: true` does not mean a workstation.** The
 open kernel reports `connected: true` (a tool call will succeed) with `backend: "occt"` and
 **none** of the device fields — no `device_name`, no `catia_version`, no `connected_since`.
@@ -136,6 +182,21 @@ conversation is furniture. `components/chat/resume-notice.tsx` renders it at the
 transcript. It is client-only via `useSyncExternalStore` for the same reason the greeting is:
 "picked up 3 days later" is measured against the reader's clock, and a server rendering it
 would disagree at every unit boundary.
+
+**`/auth/login` answers with one of two shapes, and you must narrow on `mfa_required`.**
+Since P1.7 an account with a second factor gets `202` and an `MfaChallenge` — no cookies, and a
+token that grants nothing. `isMfaChallenge` in `types/api.ts` is the discriminator; a check like
+`"user" in result` reads a missing key as a challenge and vice versa, silently, on the one route
+where being wrong shows a signed-out person a dashboard. `tsc` caught the single call site that
+had not been updated, which is the argument for the union over widening `SessionRead` with
+nullable fields.
+
+**There is no `localStorage` in `src/`, and `src/lib/token-custody.test.ts` is what keeps it that
+way.** It scans every non-test source file for `localStorage`/`sessionStorage`/`indexedDB` and for
+a hand-written `Authorization:` header, and it asserts it found files at all so an empty pass
+cannot be a vacuous one. The desktop client is covered by the same test because it is the same
+client: Tauri renders this frontend in a webview and the cookie flow works there unchanged, so
+`src-tauri/` handles no credential and needs no keychain.
 
 **`src/proxy.ts` is this repo's middleware** — Next 16 renamed `middleware.ts` to `proxy.ts`
 (export `proxy(request)` + `config.matcher`). It cookie-gates `/dashboard/*` and bounces
@@ -275,7 +336,7 @@ this code has actually shipped, so they are the ones to check for in review.
 ## Testing
 
 - vitest + jsdom, setup in `src/test/setup.ts`, config in `vitest.config.ts`
-- 323 tests across `src/lib/`, `src/components/` and `src/hooks/`. Component tests exist now
+- 384 tests across `src/lib/`, `src/components/`, `src/hooks/` and `src/app/`. Component tests exist now
   (`agent-step-list`, `error-boundary`, `markdown-message`, `chat/composer`, `chat/chat-view`)
   and are the pattern to copy; there is still **no e2e**. The pure logic behind the chat lives
   in `lib/` on purpose — grouping, transcript rehydration, markdown — so it is testable without
@@ -300,3 +361,7 @@ this code has actually shipped, so they are the ones to check for in review.
   guard (it returns 404, not 403, for another user's resource)
 - Don't put an auth token in `localStorage` — auth is httpOnly cookies + CSRF header
 - Don't hand-edit `AGENTS.md`; `next dev` rewrites it
+- Don't render `cancelled` as a failure, or group it with `failed` in any count
+- Don't paint an unmeasured assertion or an unconverged number green
+- Don't write docs content into `/docs` — it is derived from `app/handbook/`, where the guides'
+  routes are checked against the running router

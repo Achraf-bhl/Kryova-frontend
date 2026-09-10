@@ -14,6 +14,8 @@ export interface ComposerProps {
   /** A turn is streaming. The field stays usable; only sending is held back. */
   busy?: boolean;
   onStop?: () => void;
+  /** A stop has been asked for and the turn has not ended yet (P5.6). */
+  stopping?: boolean;
   deepAnalysis: boolean;
   onDeepAnalysisChange: (value: boolean) => void;
   /** Attach control, supplied by the parent because it needs a project. */
@@ -43,6 +45,7 @@ export function Composer({
   onSubmit,
   busy = false,
   onStop,
+  stopping = false,
   deepAnalysis,
   onDeepAnalysisChange,
   attachSlot,
@@ -112,10 +115,24 @@ export function Composer({
               type="button"
               onClick={onStop}
               className="k-pill"
-              aria-label="Stop the current run"
+              aria-label={
+                stopping
+                  ? "Stopping after the current step — press again to cut the stream"
+                  : "Stop the current run"
+              }
+              title={
+                stopping
+                  ? "Finishing the step already in flight, then stopping. Press again to cut the stream instead — that ends the connection, not the work."
+                  : "Stop after the current step. Everything already done is kept."
+              }
             >
               <StopIcon className="size-3" />
-              Stop
+              {/* Named rather than left as "Stop", because the gap between the
+                  press and the turn ending is real — the loop finishes the tool
+                  call in flight first. A button that said nothing during that
+                  gap reads as "nothing happened" and gets pressed again, which
+                  is the hard abort. */}
+              {stopping ? "Stopping…" : "Stop"}
             </button>
           )}
           <button

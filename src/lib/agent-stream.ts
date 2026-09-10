@@ -58,7 +58,7 @@ export type AgentEvent =
        * apart. Optional: a backend that predates the field sends nothing, and
        * the old wording is the right fallback for a turn that hit the cap.
        */
-      stop_reason?: "finished" | "step_budget" | "repeated_calls";
+      stop_reason?: "finished" | "step_budget" | "repeated_calls" | "cancelled";
       /** Tool calls actually run this turn — the length of the step list. */
       steps: number;
       prompt_tokens?: number;

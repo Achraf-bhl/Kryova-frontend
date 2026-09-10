@@ -5,6 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "@/lib/agent-stream";
 import type { Turn } from "@/lib/conversation-transcript";
 
+/** P5.6: the polite stop posts this and keeps listening. */
+const cancelTurn = vi.fn(async () => ({ status: "accepted", detail: "Stopping." }));
+
 const streamAgent =
   vi.fn<
     (
@@ -21,7 +24,10 @@ vi.mock("@/lib/agent-stream", () => ({
 
 vi.mock("@/lib/api-client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/api-client")>("@/lib/api-client");
-  return { ...actual, api: { ...actual.api, mediaBlob: vi.fn() } };
+  return {
+    ...actual,
+    api: { ...actual.api, mediaBlob: vi.fn(), cancelTurn: cancelTurn },
+  };
 });
 
 vi.mock("@/hooks/use-catia-status", () => ({
@@ -313,16 +319,67 @@ describe("ChatView — the step counter", () => {
     expect(within(panel()).getByText("1 step")).toBeInTheDocument();
   });
 
-  it("clears when the user stops the run, and stops calling the step live", async () => {
+  it("asks the server to stop on the first press, and keeps listening", async () => {
+    // P5.6. The abort used to be the first press, and its own comment admitted
+    // it "does not stop the seat" -- it ended the stream while the agent
+    // carried on driving CATIA. Now the first press asks the loop to stop, and
+    // the loop reports its own ending, so the transcript records what really
+    // ran instead of the client guessing.
     await startTurn();
 
     send(thinking(1), toolStart("c1", "Pad"));
     await userEvent.click(screen.getByRole("button", { name: /stop the current run/i }));
 
+    await waitFor(() => expect(cancelTurn).toHaveBeenCalledWith("conv-1"));
+    // Still streaming: the step in flight is allowed to finish.
+    expect(within(panel()).getByText("running…")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /press again to cut the stream/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("settles the turn when the server reports it stopped", async () => {
+    await startTurn();
+
+    send(thinking(1), toolStart("c1", "Pad"), toolEnd("c1"));
+    await userEvent.click(screen.getByRole("button", { name: /stop the current run/i }));
+    send(
+      { type: "message", content: "Stopped at your request." },
+      {
+        type: "done",
+        conversation_id: "conv-1",
+        project_id: null,
+        truncated: true,
+        stop_reason: "cancelled",
+        steps: 1,
+      },
+    );
+    await act(async () => {
+      settle();
+    });
+
+    // A turn the user stopped is not a warning and not an error: nothing went
+    // wrong, they got what they asked for.
+    expect(screen.getByText(/You stopped this turn/)).toBeInTheDocument();
+    expect(within(panel()).queryByText("Thinking")).not.toBeInTheDocument();
+    expect(within(panel()).queryByText("running…")).not.toBeInTheDocument();
+  });
+
+  it("cuts the stream on the second press, and does not leave a step running", async () => {
+    await startTurn();
+
+    send(thinking(1), toolStart("c1", "Pad"));
+    const stop = screen.getByRole("button", { name: /stop the current run/i });
+    await userEvent.click(stop);
+    await waitFor(() => expect(cancelTurn).toHaveBeenCalled());
+    await userEvent.click(
+      screen.getByRole("button", { name: /press again to cut the stream/i }),
+    );
+
     await waitFor(() => expect(screen.getByText(/You stopped this run\./)).toBeInTheDocument());
     expect(within(panel()).queryByText("Thinking")).not.toBeInTheDocument();
     expect(within(panel()).queryByText("running…")).not.toBeInTheDocument();
-    // Stopping the stream does not stop the seat, so the step says it was
+    // Cutting the stream does not stop the seat, so the step says it was
     // stopped rather than that it failed.
     expect(within(panel()).getByText(/Stopped/)).toBeInTheDocument();
     expect(within(panel()).getByText("1 step")).toBeInTheDocument();

@@ -1,6 +1,7 @@
 import { Sidebar } from "./_components/sidebar";
 
 import { ErrorBoundary } from "@/components/error-boundary";
+import { PlatformBanner } from "@/components/platform-banner";
 import { fetchConversationsSafe, fetchCurrentUser } from "@/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
       {/* `min-w-0` so a long code block in a chat message cannot widen the flex
           child and push the sidebar off-screen. */}
       <main className="min-w-0 flex-1 overflow-y-auto pt-14 md:pt-0">
+        {/* Above the page, not inside it: a maintenance notice explains why the
+            thing the user just tried did not work, so it must be visible on
+            whichever page they were on when it did not. */}
+        <PlatformBanner />
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>
     </div>

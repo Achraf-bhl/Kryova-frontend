@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConversationRow } from "./conversation-row";
 
 import {
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CloseIcon,
@@ -19,6 +20,7 @@ import {
   SearchIcon,
   SettingsIcon,
   SignOutIcon,
+  TeamIcon,
 } from "@/components/ui/icons";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api-client";
@@ -32,6 +34,8 @@ const NAV = [
   { href: "/dashboard/runs", label: "Runs", Icon: RunsIcon },
   { href: "/dashboard/files", label: "Files", Icon: FilesIcon },
   { href: "/dashboard/history", label: "History", Icon: HistoryIcon },
+  { href: "/dashboard/approvals", label: "Approvals", Icon: CheckIcon },
+  { href: "/dashboard/organisations", label: "Teams", Icon: TeamIcon },
 ] as const;
 
 function initialsOf(fullName: string | null, email: string): string {
@@ -255,6 +259,20 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
           >
             <SettingsIcon className="size-3.5" />
             Settings
+          </Link>
+        )}
+        {!collapsed && (
+          // Shown to everybody. The console answers 404 to a caller with no
+          // staff grant, so an ordinary user who follows it sees an empty page
+          // rather than a locked door telling them where the console is —
+          // which is the same reason the page itself has no client-side gate.
+          <Link
+            href="/dashboard/admin"
+            className="k-nav-item text-xs"
+            aria-current={pathname === "/dashboard/admin" ? "page" : undefined}
+          >
+            <SettingsIcon className="size-3.5" />
+            Operations
           </Link>
         )}
       </div>

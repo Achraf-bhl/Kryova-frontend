@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { FixtureEditor } from "@/components/simulate/fixture-editor";
 import { LoadEditor } from "@/components/simulate/load-editor";
+import { CostNotice } from "@/components/verification/cost-notice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
@@ -41,6 +42,8 @@ export default function SimulatePage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The tenant that gets billed, needed to ask what this will cost (P5.7). */
+  const [organisationId, setOrganisationId] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([api.listMaterials(), api.listGeometry(projectId)])
@@ -52,6 +55,14 @@ export default function SimulatePage() {
         }
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load form data"));
+
+    // Separate and deliberately silent: the estimate is advisory, and a form
+    // that works perfectly well must not show an error banner because the
+    // *cost note* could not be fetched.
+    api
+      .readProject(projectId)
+      .then((project) => setOrganisationId(project.organisation_id))
+      .catch(() => setOrganisationId(null));
   }, [projectId]);
 
   const material = useMemo(
@@ -230,6 +241,10 @@ export default function SimulatePage() {
         )}
 
         {error && <p className="text-sm text-danger">{error}</p>}
+
+        {/* Before the button, not after it. An estimate underneath the thing
+            that starts the run is an estimate read afterwards (P5.7). */}
+        {organisationId && <CostNotice organisationId={organisationId} />}
 
         <Button type="submit" loading={submitting} disabled={submitting}>
           Run simulation

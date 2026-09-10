@@ -142,6 +142,7 @@ export function ChatView({
     send,
     retry,
     stop,
+    stopping,
   } = useAgentChat({
     conversationId,
     initialTurns,
@@ -308,7 +309,17 @@ export function ChatView({
                     </>
                   )}
                   {turn.truncated && (
-                    <p className="text-xs text-warning">
+                    <p
+                      className={
+                        // A turn the *user* stopped is not a warning. Nothing
+                        // went wrong, they got what they asked for, and amber
+                        // would make the product look as though it had failed
+                        // every time somebody changed their mind.
+                        turn.stopReason === "cancelled"
+                          ? "text-xs text-muted"
+                          : "text-xs text-warning"
+                      }
+                    >
                       {/* Two different endings, two different remedies, and
                           saying the wrong one costs the user the next turn as
                           well. Measured on ladder prompt PRO1, 2026-09-08: the
@@ -323,9 +334,11 @@ export function ChatView({
                           the panel warns about on the way there — the same cap,
                           named the same way, rather than "steps", which the
                           panel uses for the rows in the list. */}
-                      {turn.stopReason === "repeated_calls"
-                        ? "The agent stopped because it kept repeating a call that had already been refused. Tell it what to do differently — it keeps everything it built."
-                        : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
+                      {turn.stopReason === "cancelled"
+                        ? "You stopped this turn. Everything above really ran — say what to do next and it carries on from there."
+                        : turn.stopReason === "repeated_calls"
+                          ? "The agent stopped because it kept repeating a call that had already been refused. Tell it what to do differently — it keeps everything it built."
+                          : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
                     </p>
                   )}
                   {turn.error && (
@@ -413,6 +426,7 @@ export function ChatView({
             onSubmit={submit}
             busy={busy}
             onStop={stop}
+            stopping={stopping}
             deepAnalysis={allowMutations}
             onDeepAnalysisChange={setAllowMutations}
             autoFocus={empty}

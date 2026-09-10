@@ -46,7 +46,7 @@ export default async function RunsPage() {
                 className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-4 text-sm hover:bg-primary-soft/50"
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-accent">{loadCaseName(item.load_case)}</span>
+                  <span className="block truncate text-accent">{loadCaseName(item.load_case ?? {})}</span>
                   <span className="block truncate text-xs text-muted">{project.name}</span>
                 </span>
                 {item.result && (

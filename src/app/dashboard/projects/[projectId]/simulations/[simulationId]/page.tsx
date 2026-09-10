@@ -5,6 +5,8 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { ResultInterpretationPanel } from "@/components/result-interpretation";
+import { StopRunButton } from "@/components/simulate/stop-run-button";
+import { VerificationSummary } from "@/components/verification/verification-panel";
 import { WebGLStressViewer } from "@/components/webgl-stress-viewer";
 import { SkeletonGrid } from "@/components/skeleton";
 import { Button } from "@/components/ui/button";
@@ -157,17 +159,32 @@ function SimulationDetail() {
       )}
 
       {!isTerminalStatus(simulation.status) && (
-        <div className="flex items-center gap-3 rounded-lg bg-surface p-5 shadow-card">
+        <div className="flex flex-wrap items-center gap-3 rounded-lg bg-surface p-5 shadow-card">
           <span className="size-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
           <span className="text-sm text-muted">
             Meshing and solving — this page will update automatically.
           </span>
+          <div className="ml-auto">
+            <StopRunButton
+              projectId={projectId}
+              simulationId={simulationId}
+              status={simulation.status}
+              onStopped={setSimulation}
+            />
+          </div>
         </div>
       )}
 
       {/* Solver warnings come before the numbers on purpose: they are the
           caveats that decide whether the numbers below mean anything. */}
       {result && result.warnings.length > 0 && <SolverWarnings warnings={result.warnings} />}
+
+      {/* And so does this, for the same reason (P5.4). "Can this number be
+          leaned on" is a question to answer *before* somebody reads a factor of
+          safety, not a footnote underneath one they have already believed. A
+          single-grid solve holds no evidence about its own discretisation
+          error, and this is where that gets said. */}
+      {result && <VerificationSummary simulation={simulation} />}
 
       {result && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">

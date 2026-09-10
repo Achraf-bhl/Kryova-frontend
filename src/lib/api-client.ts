@@ -2,8 +2,38 @@ import { parseBinarySurfaceField, surfaceFieldFromJson } from "@/lib/surface-fie
 import type { SurfaceFieldArrays } from "@/lib/surface-field";
 import type {
   AIStatus,
+  DeviceSession,
+  DomainRole,
+  Invitation,
+  InvitationIssued,
+  Member,
+  Announcement,
+  OrganisationMembership,
+  OrgRole,
+  ProjectTransfer,
+  RunEstimates,
+  ShareLink,
+  ShareLinkIssued,
+  SharedPackage,
   GeometryVersionRead,
+  LoginResult,
   Material,
+  MfaEnrolment,
+  AccountLifecycle,
+  AnnouncementLevel,
+  FeatureFlag,
+  ApiReference,
+  FleetHealth,
+  GatePage,
+  GateRead,
+  GateState,
+  Guide,
+  HandbookIndex,
+  MissionGallery,
+  ServiceStatus,
+  MaintenanceWindow,
+  MfaStatus,
+  PlatformState,
   ProjectCreate,
   ProjectRead,
   ResultInterpretation,
@@ -11,17 +41,29 @@ import type {
   SimulationRead,
   SurfaceField,
   UserRead,
+  VerificationStatus,
 } from "@/types/api";
 import type { CatiaDevice, CatiaDeviceCreated, CatiaStatus } from "@/types/catia";
 import type { ConversationDetail, ConversationPage } from "@/types/conversation";
 
 export type Session = { user: UserRead; csrf_token: string };
-export type ProjectPage = {
+
+/**
+ * One page of anything, matching `app/schemas/pagination.py::Page`.
+ *
+ * Added with P2.6 rather than declaring a fourth hand-written `XPage` alias —
+ * every list endpoint here paginates by rule (`page_size` capped at 100), so
+ * the shape is the same every time and a per-resource copy is three chances to
+ * misspell `page_size`.
+ */
+export type Page<T> = {
   total: number;
   page: number;
   page_size: number;
-  items: ProjectRead[];
+  items: T[];
 };
+
+export type ProjectPage = Page<ProjectRead>;
 
 export interface PageParams {
   page?: number;
@@ -241,16 +283,318 @@ export const api = {
       body: JSON.stringify({ email, password, full_name: fullName || null }),
     }),
 
-  login: async (email: string, password: string): Promise<Session> => {
+  /**
+   * Sign in. Returns a session, **or** a challenge when the account has a
+   * second factor (P1.7) — narrow with `isMfaChallenge` before reading `user`.
+   */
+  login: async (email: string, password: string): Promise<LoginResult> => {
     const form = new URLSearchParams({ username: email, password });
-    return request<Session>("/auth/login", {
+    return request<LoginResult>("/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: form.toString(),
     });
   },
 
+  /** Finish a sign-in with a TOTP code or a recovery code. One field: the
+   * server tells them apart, so the user does not have to classify what they
+   * are holding before they can type it. */
+  completeMfaLogin: (challengeToken: string, code: string) =>
+    request<Session>("/auth/login/mfa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ challenge_token: challengeToken, code }),
+    }),
+
   me: () => request<UserRead>("/auth/me"),
+
+  /** Flags, banners and the maintenance notice (P3.5, P3.7). Readable signed
+   * out, and deliberately readable *during* maintenance — it is the endpoint
+   * that explains the window. */
+  platformState: () => request<PlatformState>("/platform/state"),
+
+  // --- The docs site and the status page (P10.2, P10.4) --------------------
+  // All five are readable with no account, on purpose: documentation behind a
+  // login can only be read by people who already bought, and a status page only
+  // its operator can read is a private dashboard.
+
+  handbook: () => request<HandbookIndex>("/handbook"),
+  listGuides: () => request<{ guides: Guide[] }>("/handbook/guides"),
+  readGuide: (slug: string) => request<Guide>(`/handbook/guides/${slug}`),
+  /** Every ladder rung, derived from the suite rather than typed up beside it. */
+  missionGallery: () => request<MissionGallery>("/handbook/gallery"),
+  /** Built from this deployment's own OpenAPI document. */
+  apiReference: () => request<ApiReference>("/handbook/reference"),
+  /** Is Kryova working, and what happened recently. Carries no fleet numbers. */
+  serviceStatus: () => request<ServiceStatus>("/status"),
+
+  // --- Approval gates (P5.5) -----------------------------------------------
+
+  /** Gates in an organisation, newest first. */
+  listGates: (
+    organisationId: string,
+    query: { state?: GateState; conversation_id?: string; page?: number } = {},
+  ) => {
+    const params = new URLSearchParams();
+    if (query.state) params.set("state", query.state);
+    if (query.conversation_id) params.set("conversation_id", query.conversation_id);
+    if (query.page) params.set("page", String(query.page));
+    const suffix = params.toString() ? `?${params}` : "";
+    return request<GatePage>(`/organisations/${organisationId}/gates${suffix}`);
+  },
+
+  readGate: (organisationId: string, gateId: string) =>
+    request<GateRead>(`/organisations/${organisationId}/gates/${gateId}`),
+
+  /**
+   * Approve or reject a gate.
+   *
+   * `subject` is the thing **as it stands now**, not the digest the gate
+   * carries. The backend re-digests it and refuses with a `409` if it has
+   * moved — passing the stored digest back would make that check a tautology,
+   * and an approval that tracked "whatever the design became" is not a
+   * sign-off. A rejection without a `note` is refused: what happens next
+   * depends entirely on why.
+   */
+  decideGate: (
+    organisationId: string,
+    gateId: string,
+    body: { approve: boolean; subject: unknown; note?: string },
+  ) =>
+    mutatingRequest<GateRead>(`/organisations/${organisationId}/gates/${gateId}/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  /**
+   * Ask the turn streaming for this conversation to stop (P5.6).
+   *
+   * **This is the half that actually stops anything.** Aborting the fetch ends
+   * the *stream*, and the agent on the other side carries on driving a CATIA
+   * seat — the hook's own abort handler has said so in a comment since it was
+   * written. The turn ends at its next step boundary and reports itself over
+   * the stream, so the caller should keep listening rather than abort.
+   */
+  cancelTurn: (conversationId: string) =>
+    mutatingRequest<{ status: string; detail: string }>(
+      `/ai/conversations/${conversationId}/cancel`,
+      { method: "POST" },
+    ),
+
+  /**
+   * Stop a simulation (P5.6). The response carries the run's **actual** status,
+   * which is `cancelled` for a queued job and still `running` for one already
+   * inside CalculiX — that one stops at its next stage boundary, and the time
+   * it has already used is billed. Render what comes back, not what was asked.
+   */
+  cancelSimulation: (projectId: string, simulationId: string) =>
+    mutatingRequest<SimulationRead>(
+      `/projects/${projectId}/simulations/${simulationId}/cancel`,
+      { method: "POST" },
+    ),
+
+  /** What a run is likely to cost, from the same meter that bills it (P8.4).
+   * An estimate with too little history carries no number — render `sentence`
+   * rather than assembling one from the parts. */
+  runEstimate: (organisationId: string) =>
+    request<RunEstimates>(`/organisations/${organisationId}/billing/estimate`),
+
+  // --- Operations console (P3.4-P3.7) --------------------------------------
+  // Every one of these is 404 for a non-staff caller: for an ordinary user the
+  // whole /admin tree is simply not there.
+  fleetHealth: (hours = 24) => request<FleetHealth>(`/admin/health?hours=${hours}`),
+  listFlags: () => request<FeatureFlag[]>("/admin/flags"),
+  createFlag: (body: {
+    key: string;
+    description?: string;
+    enabled?: boolean;
+    rollout_percentage?: number;
+  }) =>
+    mutatingRequest<FeatureFlag>("/admin/flags", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  updateFlag: (
+    key: string,
+    body: {
+      description?: string;
+      enabled?: boolean;
+      rollout_percentage?: number;
+      killed?: boolean;
+    },
+  ) =>
+    mutatingRequest<FeatureFlag>(`/admin/flags/${key}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  readMaintenance: () => request<MaintenanceWindow | null>("/admin/maintenance"),
+  startMaintenance: (body: {
+    reason: string;
+    message: string;
+    expected_end_at?: string | null;
+    allow_staff?: boolean;
+  }) =>
+    mutatingRequest<MaintenanceWindow>("/admin/maintenance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  endMaintenance: () =>
+    mutatingRequest<MaintenanceWindow>("/admin/maintenance", { method: "DELETE" }),
+  listAnnouncements: () => request<Announcement[]>("/admin/announcements"),
+  publishAnnouncement: (body: {
+    message: string;
+    level?: AnnouncementLevel;
+    ends_at?: string | null;
+  }) =>
+    mutatingRequest<Announcement>("/admin/announcements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  withdrawAnnouncement: (id: string) =>
+    mutatingRequest<Announcement>(`/admin/announcements/${id}`, { method: "DELETE" }),
+  suspendUser: (userId: string, reason: string) =>
+    mutatingRequest<AccountLifecycle>(`/admin/users/${userId}/suspend`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    }),
+  reinstateUser: (userId: string) =>
+    mutatingRequest<AccountLifecycle>(`/admin/users/${userId}/reinstate`, { method: "POST" }),
+  scheduleUserDeletion: (userId: string, graceDays = 30, reason?: string) =>
+    mutatingRequest<AccountLifecycle>(`/admin/users/${userId}/deletion`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grace_days: graceDays, reason: reason ?? null }),
+    }),
+  cancelUserDeletion: (userId: string) =>
+    mutatingRequest<AccountLifecycle>(`/admin/users/${userId}/deletion`, { method: "DELETE" }),
+
+  // --- Devices (P1.3) ------------------------------------------------------
+  // The session row is the truth, not the cookie: a device signed out from
+  // here disappears everywhere immediately, which is the whole point.
+  listDevices: () => request<DeviceSession[]>("/auth/sessions"),
+  endDevice: (sessionId: string) =>
+    mutatingRequest<void>(`/auth/sessions/${sessionId}`, { method: "DELETE" }),
+  signOutEverywhere: () => mutatingRequest<void>("/auth/logout-all", { method: "POST" }),
+
+  // --- Email verification (P1.5) -------------------------------------------
+  verificationStatus: () => request<VerificationStatus>("/auth/verify-email"),
+  resendVerification: () =>
+    mutatingRequest<VerificationStatus>("/auth/verify-email/resend", { method: "POST" }),
+  /** Unauthenticated: the link opens in whichever browser the mail client hands
+   * it to, which is routinely not the one holding the session. */
+  confirmEmail: (token: string) =>
+    request<UserRead>("/auth/verify-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+
+  // --- Second factor (P1.7) ------------------------------------------------
+  mfaStatus: () => request<MfaStatus>("/auth/mfa"),
+  beginMfaEnrolment: () => mutatingRequest<MfaEnrolment>("/auth/mfa", { method: "POST" }),
+  confirmMfa: (code: string) =>
+    mutatingRequest<MfaStatus>("/auth/mfa/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }),
+  regenerateRecoveryCodes: () =>
+    mutatingRequest<{ recovery_codes: string[] }>("/auth/mfa/recovery-codes", {
+      method: "POST",
+    }),
+  disableMfa: (code: string) =>
+    mutatingRequest<void>("/auth/mfa", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    }),
+
+  // --- Organisations, members and invitations (P2.6) -----------------------
+  listOrganisations: () =>
+    request<Page<OrganisationMembership>>("/organisations?page=1&page_size=100"),
+  createOrganisation: (name: string) =>
+    mutatingRequest<OrganisationMembership>("/organisations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+  /** Every project the *tenant* owns, whoever created it — as opposed to
+   * `listProjects`, which answers with what you made. */
+  listOrganisationProjects: (organisationId: string, params?: PageParams) =>
+    request<ProjectPage>(`/organisations/${organisationId}/projects${toQuery(params)}`),
+  listMembers: (organisationId: string) =>
+    request<Page<Member>>(`/organisations/${organisationId}/members?page=1&page_size=100`),
+  updateMember: (
+    organisationId: string,
+    userId: string,
+    roles: { role?: OrgRole; domain_role?: DomainRole | null },
+  ) =>
+    mutatingRequest<Member>(`/organisations/${organisationId}/members/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(roles),
+    }),
+  removeMember: (organisationId: string, userId: string) =>
+    mutatingRequest<void>(`/organisations/${organisationId}/members/${userId}`, {
+      method: "DELETE",
+    }),
+  listInvitations: (organisationId: string) =>
+    request<Page<Invitation>>(
+      `/organisations/${organisationId}/invitations?page=1&page_size=100`,
+    ),
+  createInvitation: (
+    organisationId: string,
+    email: string,
+    role: OrgRole,
+    domainRole: DomainRole | null,
+  ) =>
+    mutatingRequest<InvitationIssued>(`/organisations/${organisationId}/invitations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, role, domain_role: domainRole }),
+    }),
+  revokeInvitation: (organisationId: string, invitationId: string) =>
+    mutatingRequest<void>(`/organisations/${organisationId}/invitations/${invitationId}`, {
+      method: "DELETE",
+    }),
+  acceptInvitation: (token: string) =>
+    mutatingRequest<OrganisationMembership>("/organisations/invitations/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+
+  // --- Sharing and transfer (P2.5) -----------------------------------------
+  listShareLinks: (projectId: string) =>
+    request<ShareLink[]>(`/projects/${projectId}/shares`),
+  createShareLink: (
+    projectId: string,
+    body: { label?: string; note?: string; days?: number; allow_geometry_download?: boolean },
+  ) =>
+    mutatingRequest<ShareLinkIssued>(`/projects/${projectId}/shares`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  revokeShareLink: (projectId: string, shareId: string) =>
+    mutatingRequest<void>(`/projects/${projectId}/shares/${shareId}`, { method: "DELETE" }),
+  transferProject: (projectId: string, toOrganisationId: string, reason?: string) =>
+    mutatingRequest<ProjectTransfer>(`/projects/${projectId}/transfer`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to_organisation_id: toOrganisationId, reason: reason ?? null }),
+    }),
+  listTransfers: (projectId: string) =>
+    request<ProjectTransfer[]>(`/projects/${projectId}/transfers`),
+  /** Unauthenticated by design — the token is the credential. Every failure is
+   * a 404 with one message, so do not branch on why. */
+  readSharedPackage: (token: string) => request<SharedPackage>(`/share/${token}`),
 
   listProjects: (page = 1, pageSize = 50) =>
     request<ProjectPage>(`/projects?page=${page}&page_size=${pageSize}`),

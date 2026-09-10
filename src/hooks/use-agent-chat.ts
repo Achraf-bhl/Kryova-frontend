@@ -93,6 +93,16 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const reportedProjectRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /**
+   * Whether a stop has been asked for and not yet taken effect (P5.6).
+   *
+   * Both a ref and state on purpose: `stop` reads it to decide whether this is
+   * the polite first press or the abort, and it must see the value set by the
+   * press a moment ago rather than the one from the render it closed over. The
+   * state is what the composer renders.
+   */
+  const stoppingRef = useRef(false);
+  const [stopping, setStopping] = useState(false);
 
   const onConversationStartedRef = useRef(onConversationStarted);
   const onProjectCreatedRef = useRef(onProjectCreated);
@@ -225,7 +235,9 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             truncated: event.truncated,
             // Only carried for the two unfinished exits; "finished" would
             // never be read, because the banner is behind `truncated`.
-            ...(event.stop_reason === "step_budget" || event.stop_reason === "repeated_calls"
+            ...(event.stop_reason === "step_budget" ||
+            event.stop_reason === "repeated_calls" ||
+            event.stop_reason === "cancelled"
               ? { stopReason: event.stop_reason }
               : {}),
           });
@@ -329,6 +341,12 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
         setBusy(false);
         setThinking(null);
         setNarration("");
+        // However this turn ended — answered, stopped, aborted or failed — the
+        // stop request that belonged to it is spent. Leaving it set would make
+        // the next press of stop an immediate hard abort, which is the harsher
+        // of the two behaviours arriving without the user asking for it.
+        stoppingRef.current = false;
+        setStopping(false);
         onTurnFinishedRef.current?.();
       }
     },
@@ -354,7 +372,40 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     await run(lastMessage);
   }, [busy, lastMessage, run]);
 
-  const stop = useCallback(() => abortRef.current?.abort(), []);
+  /**
+   * Stop the running turn (P5.6). Two presses, two different things.
+   *
+   * The **first** asks the server to stop: the loop ends at its next step
+   * boundary, writes "Stopped at your request" into the transcript and closes
+   * the stream itself with `stop_reason: "cancelled"`. We keep listening,
+   * because that is what turns a stop into a *clean* stop — the steps settle,
+   * the message lands, and reopening the conversation shows what really ran.
+   *
+   * The **second** aborts the fetch, which is what this used to do on the
+   * first press. It is kept as the escape hatch for a stream that has gone
+   * quiet, and it is worse: it ends the stream and not the work. The agent on
+   * the other side goes on driving a CATIA seat, and the hook's abort handler
+   * has said exactly that in a comment since it was written — which is what
+   * made the polite version worth building.
+   *
+   * With no conversation id there is nothing to address, so a first press is
+   * the abort. That is only the very first turn, before the backend has minted
+   * one.
+   */
+  const stop = useCallback(() => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId || stoppingRef.current) {
+      abortRef.current?.abort();
+      return;
+    }
+    stoppingRef.current = true;
+    setStopping(true);
+    // Deliberately not awaited and deliberately swallowed: a stop the server
+    // never heard leaves the second press — a real abort — one click away, and
+    // an error banner over a turn that is still running fine would be the
+    // wrong thing on screen at the wrong moment.
+    void api.cancelTurn(conversationId).catch(() => {});
+  }, []);
 
   return {
     conversationId,
@@ -371,5 +422,13 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     send,
     retry,
     stop,
+    /**
+     * A stop has been asked for and the turn has not ended yet (P5.6). The
+     * composer says "stopping…" rather than swapping straight back to Send:
+     * the gap is real — the loop finishes the tool call in flight first — and
+     * a button that snapped back instantly would read as "nothing happened"
+     * and get pressed again, which is the hard abort.
+     */
+    stopping,
   };
 }
