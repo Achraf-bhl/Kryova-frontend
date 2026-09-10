@@ -478,6 +478,47 @@ describe("ChatView — why an unfinished turn stopped", () => {
     expect(screen.queryByText(/kept repeating a call/i)).not.toBeInTheDocument();
   });
 
+  it("says a question is waiting, not that it ran out of rounds, when it stopped to ask", async () => {
+    // E16.4. Measured through the GUI on the seat, 2026-09-10: a turn that
+    // stopped at **step 12 of 60** to ask which mesh to accept was captioned
+    // "ran out of tool rounds. Ask for one thing at a time" — the one piece of
+    // advice that is wrong here. Asking for less does not answer the question,
+    // and it buries the question the agent actually asked.
+    await endTurnWith({
+      type: "done",
+      conversation_id: "conv-1",
+      project_id: null,
+      truncated: true,
+      stop_reason: "needs_input",
+      steps: 12,
+    });
+
+    expect(screen.getByText(/stopped to ask you something/i)).toBeInTheDocument();
+    expect(screen.queryByText(/ran out of tool rounds/i)).not.toBeInTheDocument();
+    // It must point at where the question is, or the caption is a dead end.
+    expect(screen.getByText(/end of its answer/i)).toBeInTheDocument();
+  });
+
+  it("says a checkpoint needs sign-off, and does not paint it as a warning", async () => {
+    // P5.5. A gate stopping the turn is the gate working. Amber would teach
+    // people that a correct sign-off is a malfunction, which is the same
+    // argument that keeps a user cancellation muted.
+    await endTurnWith({
+      type: "done",
+      conversation_id: "conv-1",
+      project_id: null,
+      truncated: true,
+      stop_reason: "awaiting_approval",
+      steps: 7,
+    });
+
+    const caption = screen.getByText(/checkpoint that needs sign-off/i);
+    expect(caption).toBeInTheDocument();
+    expect(screen.queryByText(/ran out of tool rounds/i)).not.toBeInTheDocument();
+    expect(caption.className).toContain("text-muted");
+    expect(caption.className).not.toContain("text-warning");
+  });
+
   it("falls back to the budget wording when the backend sends no reason", async () => {
     // A backend older than the field is not a reason to show nothing, and the
     // cap is the case that existed before it.

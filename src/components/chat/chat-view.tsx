@@ -318,7 +318,15 @@ export function ChatView({
                         // went wrong, they got what they asked for, and amber
                         // would make the product look as though it had failed
                         // every time somebody changed their mind.
-                        turn.stopReason === "cancelled"
+                        //
+                        // `awaiting_approval` is muted for the same reason: a
+                        // checkpoint stopping the turn is the gate doing its
+                        // job, and painting a correct sign-off amber teaches
+                        // people that gates are a malfunction. `needs_input`
+                        // stays amber — it is reached by repeated failure, and
+                        // something really did go wrong on the way there.
+                        turn.stopReason === "cancelled" ||
+                        turn.stopReason === "awaiting_approval"
                           ? "text-xs text-muted"
                           : "text-xs text-warning"
                       }
@@ -341,7 +349,11 @@ export function ChatView({
                         ? "You stopped this turn. Everything above really ran — say what to do next and it carries on from there."
                         : turn.stopReason === "repeated_calls"
                           ? "The agent stopped because it kept repeating a call that had already been refused. Tell it what to do differently — it keeps everything it built."
-                          : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
+                          : turn.stopReason === "needs_input"
+                            ? "The agent stopped to ask you something rather than keep retrying — the question is at the end of its answer. Answer it and it carries on from what is built."
+                            : turn.stopReason === "awaiting_approval"
+                              ? "The agent reached a checkpoint that needs sign-off. Nothing past it has run; approve or reject it under Approvals and it carries on from there."
+                              : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
                     </p>
                   )}
                   {turn.error && (

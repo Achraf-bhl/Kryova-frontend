@@ -58,7 +58,26 @@ export type AgentEvent =
        * apart. Optional: a backend that predates the field sends nothing, and
        * the old wording is the right fallback for a turn that hit the cap.
        */
-      stop_reason?: "finished" | "step_budget" | "repeated_calls" | "cancelled";
+      stop_reason?:
+        | "finished"
+        | "step_budget"
+        | "repeated_calls"
+        | "cancelled"
+        /**
+         * E16.4: the agent gave up retrying and asked a specific question,
+         * which is already appended to the answer. P5.5: a checkpoint raised
+         * an approval gate and the turn ended on it.
+         *
+         * **Both shipped on the backend before this union knew about them**,
+         * so both fell through to "ran out of tool rounds" — the one piece of
+         * advice that is wrong for a turn which stopped at step 12 of 60 to
+         * ask something. Measured through the GUI on the seat, 2026-09-10.
+         * Nothing caught it because this file is hand-maintained against the
+         * backend and, as the repo's own landmine list says, nothing verifies
+         * it: an unknown string is not a type error, it is a missing branch.
+         */
+        | "needs_input"
+        | "awaiting_approval";
       /** Tool calls actually run this turn — the length of the step list. */
       steps: number;
       prompt_tokens?: number;

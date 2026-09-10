@@ -277,11 +277,19 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
           setStreamingText("");
           settleSteps({
             truncated: event.truncated,
-            // Only carried for the two unfinished exits; "finished" would
-            // never be read, because the banner is behind `truncated`.
-            ...(event.stop_reason === "step_budget" ||
-            event.stop_reason === "repeated_calls" ||
-            event.stop_reason === "cancelled"
+            // Carried for every exit except "finished", which would never be
+            // read because the banner is behind `truncated`.
+            //
+            // **This was an allow-list of three and it silently ate the rest.**
+            // E16.4's `needs_input` and P5.5's `awaiting_approval` shipped on
+            // the backend, arrived on the wire, and were dropped here — so the
+            // banner fell through to "ran out of tool rounds" on a turn that
+            // had stopped at step 12 of 60 to ask a question. Measured through
+            // the GUI on the seat, 2026-09-10. Naming the one value to exclude
+            // rather than the ones to admit means the next reason the backend
+            // grows reaches the banner, which has a fallback, instead of
+            // vanishing here, which does not.
+            ...(event.stop_reason && event.stop_reason !== "finished"
               ? { stopReason: event.stop_reason }
               : {}),
           });

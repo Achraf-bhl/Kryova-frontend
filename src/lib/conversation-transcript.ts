@@ -16,7 +16,12 @@ export interface Turn {
   steps?: StepView[];
   truncated?: boolean;
   /** Why an unfinished turn stopped — see `AgentEvent`'s `done` event. */
-  stopReason?: "step_budget" | "repeated_calls" | "cancelled";
+  stopReason?:
+    | "step_budget"
+    | "repeated_calls"
+    | "cancelled"
+    | "needs_input"
+    | "awaiting_approval";
   /** Set when the turn ended in an error, so the UI can offer a retry. */
   error?: string;
 }
