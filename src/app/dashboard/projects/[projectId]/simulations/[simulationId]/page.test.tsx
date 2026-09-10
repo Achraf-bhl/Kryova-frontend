@@ -135,3 +135,47 @@ describe("SimulationPage results", () => {
     await waitFor(() => expect(screen.getByText("Failed")).toBeInTheDocument());
   });
 });
+
+describe("SimulationPage progress", () => {
+  const RUNNING = { ...BASE_SIMULATION, status: "running", result: null, error: null, finished_at: null };
+
+  it("shows the stage a running solve reported, and no percentage", async () => {
+    readSimulation.mockResolvedValue({
+      ...RUNNING,
+      progress: { stage: "solving", detail: "", index: null, total: null, at: "2026-08-27T00:00:01Z" },
+    });
+
+    render(<SimulationPage />);
+
+    expect(await screen.findByText(/^Solving — this page will/)).toBeInTheDocument();
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it("names the grid of a convergence study, because those are genuinely countable", async () => {
+    readSimulation.mockResolvedValue({
+      ...RUNNING,
+      grids: 3,
+      progress: {
+        stage: "meshing",
+        detail: "12,400 elements",
+        index: 2,
+        total: 3,
+        at: "2026-08-27T00:00:01Z",
+      },
+    });
+
+    render(<SimulationPage />);
+
+    expect(
+      await screen.findByText(/Building the mesh — grid 2 of 3 \(12,400 elements\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("says the run is starting when it has not reported, never stage zero of four", async () => {
+    readSimulation.mockResolvedValue({ ...RUNNING, progress: null });
+
+    render(<SimulationPage />);
+
+    expect(await screen.findByText(/^Meshing and solving — this page will/)).toBeInTheDocument();
+  });
+});
