@@ -89,6 +89,9 @@ export function ResultInterpretationPanel({
       </div>
 
       <p className="text-sm font-medium">{data.headline}</p>
+      {/* Beside the verdict, not under the caveat: "Passes" is the word most
+          likely to be read as a prediction of the real part (E20.3). */}
+      <p className="text-xs text-warning">{data.validation}</p>
 
       <ul className="space-y-2">
         {data.findings.map((finding) => (

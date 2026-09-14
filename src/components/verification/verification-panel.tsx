@@ -151,6 +151,10 @@ export function VerificationSummary({ simulation }: { simulation: SimulationRead
             discretisation error assessed rather than assumed.
           </li>
         )}
+        {/* Amber on a converged run too. Convergence answers solution
+            verification; this answers validation, which nothing in the product
+            can supply, so it is never the reassuring colour (E20.3). */}
+        <li className="text-warning">{simulation.validation}</li>
       </ul>
     </div>
   );

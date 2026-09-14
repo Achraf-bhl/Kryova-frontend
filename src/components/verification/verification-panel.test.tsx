@@ -150,3 +150,39 @@ describe("VerificationSummary", () => {
     expect(screen.queryByText(/rather than assumed/)).not.toBeInTheDocument();
   });
 });
+
+describe("VerificationSummary and validation (E20.3)", () => {
+  // The server's sentence, verbatim. The panel must render what it is given
+  // rather than a wording of its own, so the fixture is deliberately not the
+  // backend string: a component that hard-coded its own copy would fail here.
+  const STATEMENT = "Not validated. Fixture wording from the API.";
+
+  it("renders the server's validation statement beside the number", () => {
+    render(
+      <VerificationSummary simulation={simulation({ result: {} as never, validation: STATEMENT })} />,
+    );
+    expect(screen.getByText(STATEMENT)).toHaveClass("text-warning");
+  });
+
+  it("keeps it amber on a converged, multi-grid run", () => {
+    // Convergence is solution verification. It says nothing about whether the
+    // model represents the real part, so a converged run is not an exemption.
+    render(
+      <VerificationSummary
+        simulation={simulation({
+          grids: 3,
+          result: { mesh_convergence: "converged" } as never,
+          validation: STATEMENT,
+        })}
+      />,
+    );
+    const statement = screen.getByText(STATEMENT);
+    expect(statement).toHaveClass("text-warning");
+    expect(statement).not.toHaveClass("text-success");
+  });
+
+  it("says nothing about validation before there is a number", () => {
+    render(<VerificationSummary simulation={simulation({ validation: STATEMENT })} />);
+    expect(screen.queryByText(STATEMENT)).not.toBeInTheDocument();
+  });
+});

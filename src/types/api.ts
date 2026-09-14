@@ -358,6 +358,12 @@ export interface SimulationRead {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /**
+   * That no number here has been validated against a physical part (E20.3).
+   * Written by the server (`app/verify/standards.py::NOT_VALIDATED`) and rendered
+   * as given — one wording, so one standard.
+   */
+  validation: string;
 
   // Four fields the backend has returned since the plane-stress and
   // convergence-study work and this mirror never gained. Found 2026-09-10 by
@@ -443,6 +449,12 @@ export interface ResultInterpretation {
   suggestions: DesignSuggestion[];
   confidence: "high" | "medium" | "low";
   caveat: string;
+  /**
+   * That no number here has been validated against a physical part (E20.3).
+   * Written by the server (`app/verify/standards.py::NOT_VALIDATED`) and rendered
+   * as given — one wording, so one standard.
+   */
+  validation: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -554,6 +566,12 @@ export interface SharedPackage {
   allow_geometry_download: boolean;
   geometry: SharedGeometry[];
   simulations: SharedSimulation[];
+  /**
+   * That no number here has been validated against a physical part (E20.3).
+   * Written by the server (`app/verify/standards.py::NOT_VALIDATED`) and rendered
+   * as given — one wording, so one standard.
+   */
+  validation: string;
 }
 
 export interface ProjectTransfer {

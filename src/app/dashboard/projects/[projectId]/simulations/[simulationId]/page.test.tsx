@@ -48,6 +48,7 @@ const BASE_SIMULATION: Omit<SimulationRead, "status" | "result" | "error"> = {
   grids: 1,
   analysis: "linear-static",
   thickness_mm: null,
+  validation: "Not validated. Fixture wording from the API.",
 };
 
 const SURFACE: SurfaceField = {

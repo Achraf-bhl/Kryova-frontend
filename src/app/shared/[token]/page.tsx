@@ -22,6 +22,9 @@ import type { SharedPackage } from "@/types/api";
  * - **`single-grid` is never rendered as a pass.** A peak stress from one mesh
  *   holds no evidence about its own discretisation error, so it is labelled
  *   rather than badged.
+ * - **Nothing here is validated, and the package says so above the table** —
+ *   the server's sentence, verbatim (E20.3). A supplier reading a peak stress
+ *   is the reader most likely to take it as a prediction of the part.
  */
 export default function SharedPackagePage({
   params,
@@ -79,6 +82,9 @@ export default function SharedPackagePage({
 
         <section className="space-y-3">
           <h2 className="text-sm font-semibold text-accent">Results</h2>
+          {shared.simulations.length > 0 && (
+            <p className="max-w-prose text-xs text-warning">{shared.validation}</p>
+          )}
           {shared.simulations.length === 0 ? (
             <p className="text-sm text-muted">No simulations have been run yet.</p>
           ) : (
