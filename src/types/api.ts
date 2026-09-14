@@ -375,12 +375,25 @@ export interface SimulationRead {
   element_order: number;
   /** Grids in a convergence study. 1 is a single solve and is never `converged`. */
   grids: number;
-  /** `"linear-static" | "modal" | "buckling" | "thermal-conduction" | "plane-stress" | "plane-strain"` */
+  /** `"solid" | "plane-stress" | "plane-strain" | "thermal-conduction" | "thermal-transient"` */
   analysis: string;
   /** Required on a plane run, refused on a solid one. Every plane stress scales with it. */
   thickness_mm: number | null;
-  /** Present only on a conduction run; a sibling of `load_case`, not part of it. */
+  /** Present only on a steady conduction run; a sibling of `load_case`, not part of it. */
   thermal_case?: Record<string, unknown> | null;
+  /** Present only on a `thermal-transient` run: the steady vocabulary plus time (E10.1). */
+  transient_case?: Record<string, unknown> | null;
+  /**
+   * On a solid run that carries a thermal run's temperatures (E10.1): which run,
+   * which time sample, the unstrained reference in kelvin, and the digest of the
+   * stored field it read — so a stress names the exact temperatures behind it.
+   */
+  temperature_source?: {
+    simulation_id: string;
+    step: number | null;
+    reference_temperature_k: number;
+    fields_sha256: string;
+  } | null;
 }
 
 export interface SimulationCreate {
@@ -409,6 +422,23 @@ export interface StaticResult {
   element_count: number;
   solve_seconds: number;
   warnings: string[];
+}
+
+/**
+ * `GET /simulations/{id}/temperature` — a thermal run's surface temperature.
+ * Mirrors `app/schemas/simulation.py::SurfaceTemperature`. The min and max are
+ * over every node of the sample, interior included; `time_s`, `step` and
+ * `step_count` are null on a steady run, which has no time axis.
+ */
+export interface SurfaceTemperature {
+  node_positions: number[][];
+  triangles: number[][];
+  temperatures_k: number[];
+  min_temperature_k: number;
+  max_temperature_k: number;
+  time_s: number | null;
+  step: number | null;
+  step_count: number | null;
 }
 
 export interface SurfaceField {
