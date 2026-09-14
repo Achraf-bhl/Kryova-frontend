@@ -897,6 +897,21 @@ export interface DesignDocument {
   features: SpecFeature[];
 }
 
+/**
+ * What a change to a design is in law, today (E19 task 5,
+ * `app/compliance/modification.py`). Computed by the server from the recorded
+ * placing-on-market date on every read — never derived here, so the panel and
+ * the agent cannot give two answers.
+ */
+export interface ModificationNotice {
+  character: "design-time" | "after-placing-on-market";
+  placed_on_market_on: string | null;
+  headline: string;
+  detail: string;
+  /** The clauses the notice rests on. Empty for a design-time change. */
+  citations: string[];
+}
+
 export interface DesignRead {
   id: string;
   conversation_id: string;
@@ -906,6 +921,9 @@ export interface DesignRead {
   digest: string;
   revision_number: number;
   document: DesignDocument;
+  /** The day a unit of the machine was first placed on the market, as recorded. */
+  placed_on_market_on: string | null;
+  modification: ModificationNotice;
   created_at: string;
   updated_at: string;
 }
@@ -920,6 +938,8 @@ export interface DesignRevision {
   author: string;
   author_id: string | null;
   created_at: string;
+  /** Written on or after the recorded placing-on-market date. */
+  after_placing_on_market: boolean;
 }
 
 export interface DesignRevisionPage {

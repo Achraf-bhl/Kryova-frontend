@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { ApiError, api } from "@/lib/api-client";
 import type { DesignRead } from "@/types/api";
@@ -17,6 +17,18 @@ import { SpecPanel } from "./spec-panel";
  * a permanent empty box above the composer.
  */
 
+const ON_THE_MARKET: Partial<DesignRead> = {
+  placed_on_market_on: "2027-03-01",
+  modification: {
+    character: "after-placing-on-market",
+    placed_on_market_on: "2027-03-01",
+    headline: "This machine was placed on the market on 1 March 2027. This is not a design-time change.",
+    detail:
+      "If it is a change to a machine already in service … it is a substantial modification (Article 3(16)). Kryova cannot tell which this is.",
+    citations: ["Article 10(4)", "Article 3(16)", "Article 18"],
+  },
+};
+
 function design(overrides: Partial<DesignRead> = {}): DesignRead {
   return {
     id: "design-1",
@@ -25,6 +37,14 @@ function design(overrides: Partial<DesignRead> = {}): DesignRead {
     name: "Bracket",
     digest: "ac5e781f1c9bc1f943475875285b07301769011bbce412fa7b97083947e489f7",
     revision_number: 2,
+    placed_on_market_on: null,
+    modification: {
+      character: "design-time",
+      placed_on_market_on: null,
+      headline: "Design-time change.",
+      detail: "This machine has not been recorded as placed on the market.",
+      citations: [],
+    },
     created_at: "2026-09-10T09:00:00Z",
     updated_at: "2026-09-10T09:05:00Z",
     document: {
@@ -183,5 +203,122 @@ describe("SpecPanel", () => {
     await userEvent.tab();
 
     expect(patch).not.toHaveBeenCalled();
+  });
+
+  describe("once the machine is placed on the market (E19 task 5)", () => {
+    it("shows nothing about it while the design is design-time", async () => {
+      render(<SpecPanel conversationId="conv-1" revision={1} />);
+      await screen.findByText("Bracket");
+
+      expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    });
+
+    it("shows the server's notice, with the clauses it rests on", async () => {
+      vi.spyOn(api, "readDesign").mockResolvedValue(design(ON_THE_MARKET));
+      render(<SpecPanel conversationId="conv-1" revision={1} />);
+
+      const note = await screen.findByRole("note", { name: "Placed on the market" });
+      expect(note).toHaveTextContent("not a design-time change");
+      expect(note).toHaveTextContent("substantial modification");
+      expect(note).toHaveTextContent("Article 18");
+    });
+
+    it("says an edit after placing is not design work before saying what it reached", async () => {
+      // The same PATCH, the same diff — and a different legal act. The message
+      // is where the difference has to be read, because it is what the person
+      // who made the change looks at.
+      vi.spyOn(api, "readDesign").mockResolvedValue(design(ON_THE_MARKET));
+      vi.spyOn(api, "setDesignParameter").mockResolvedValue({
+        design: design({ ...ON_THE_MARKET, revision_number: 3 }),
+        changed: true,
+        diff: { plan_changed: true, affected: ["plate.body"], downstream: [] },
+      });
+      render(<SpecPanel conversationId="conv-1" revision={1} />);
+      await screen.findByText("Bracket");
+
+      const field = screen.getByRole("spinbutton");
+      await userEvent.clear(field);
+      await userEvent.type(field, "12{Enter}");
+
+      expect(
+        await screen.findByText(/^Changed after this machine was placed on the market\. Saved\./),
+      ).toBeInTheDocument();
+    });
+
+    it("records the day and re-renders from what the server says", async () => {
+      const record = vi
+        .spyOn(api, "recordPlacedOnMarket")
+        .mockResolvedValue(design(ON_THE_MARKET));
+      render(<SpecPanel conversationId="conv-1" revision={1} />);
+      await screen.findByText("Bracket");
+
+      fireEvent.change(screen.getByLabelText(/Placed on the market\? Record the day/), {
+        target: { value: "2027-03-01" },
+      });
+      await userEvent.click(screen.getByRole("button", { name: "Record" }));
+
+      await waitFor(() => expect(record).toHaveBeenCalledWith("conv-1", "2027-03-01"));
+      expect(await screen.findByRole("note")).toHaveTextContent("1 March 2027");
+      expect(screen.getByRole("button", { name: "Correct" })).toBeDisabled();
+    });
+
+    it("surfaces a refused date instead of pretending it was recorded", async () => {
+      vi.spyOn(api, "recordPlacedOnMarket").mockRejectedValue(
+        new ApiError(422, "2 March 2099 has not happened yet."),
+      );
+      render(<SpecPanel conversationId="conv-1" revision={1} />);
+      await screen.findByText("Bracket");
+
+      fireEvent.change(screen.getByLabelText(/Placed on the market\? Record the day/), {
+        target: { value: "2099-03-02" },
+      });
+      await userEvent.click(screen.getByRole("button", { name: "Record" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("has not happened yet");
+      expect(screen.queryByRole("note")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("the technical file (E19 task 3)", () => {
+    it("downloads the server's file under the design's name and revision", async () => {
+      const blob = new Blob(["{}"], { type: "application/json" });
+      const fetchFile = vi.spyOn(api, "technicalFileBlob").mockResolvedValue(blob);
+      // jsdom has no object URLs, so they are provided for this test and
+      // removed after it, rather than left on the global for the next one.
+      const createUrl = vi.fn(() => "blob:technical-file");
+      const revokeUrl = vi.fn();
+      const original = { create: URL.createObjectURL, revoke: URL.revokeObjectURL };
+      URL.createObjectURL = createUrl;
+      URL.revokeObjectURL = revokeUrl;
+      onTestFinished(() => {
+        URL.createObjectURL = original.create;
+        URL.revokeObjectURL = original.revoke;
+      });
+      const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+      render(<SpecPanel conversationId="conv-1" revision={1} />);
+      await screen.findByText("Bracket");
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Export contribution to the technical file" }),
+      );
+
+      await waitFor(() => expect(fetchFile).toHaveBeenCalledWith("conv-1"));
+      expect(createUrl).toHaveBeenCalledWith(blob);
+      const anchor = click.mock.instances[0] as unknown as HTMLAnchorElement;
+      expect(anchor.download).toBe("Bracket-r2-technical-file.json");
+      expect(revokeUrl).toHaveBeenCalledWith("blob:technical-file");
+    });
+
+    it("says so when the export fails rather than doing nothing", async () => {
+      vi.spyOn(api, "technicalFileBlob").mockRejectedValue(new ApiError(404, "no design yet"));
+      render(<SpecPanel conversationId="conv-1" revision={1} />);
+      await screen.findByText("Bracket");
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Export contribution to the technical file" }),
+      );
+
+      expect(await screen.findByRole("alert")).toHaveTextContent("no design yet");
+    });
   });
 });

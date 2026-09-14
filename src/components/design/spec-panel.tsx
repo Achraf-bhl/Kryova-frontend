@@ -3,7 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ApiError, api } from "@/lib/api-client";
-import { isDerived, type DesignRead, type SpecFeature, type SpecParameter } from "@/types/api";
+import {
+  isDerived,
+  type DesignRead,
+  type ModificationNotice,
+  type SpecFeature,
+  type SpecParameter,
+} from "@/types/api";
 
 /**
  * The design as an artefact, beside the chat (P5 task 3).
@@ -31,6 +37,14 @@ import { isDerived, type DesignRead, type SpecFeature, type SpecParameter } from
  * **Rationale notes are shown, not hidden behind a hover.** `note` is the answer
  * to "why is this rib here" in six months, and a rationale slot nobody reads is
  * a rationale slot nobody fills in.
+ *
+ * **A change after the machine is on the market does not read like design work.**
+ * Once the manufacturer records the day a unit was placed on the market, the
+ * server's notice (`app/compliance/modification.py`) is shown above the
+ * parameters and every edit's message says so first. Kryova cannot tell a
+ * manufacturer's design change from a substantial modification of a machine in
+ * service, and the notice says that too — the panel only repeats the server's
+ * words, so it cannot soften them.
  *
  * It is pinned beside the composer rather than placed in the transcript, for the
  * same reason `KernelPartView` is: this says what is true *now*. A copy of the
@@ -60,6 +74,8 @@ export function SpecPanel({ conversationId, revision }: SpecPanelProps) {
   const [pending, setPending] = useState<string | null>(null);
   const [lastEdit, setLastEdit] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [placingError, setPlacingError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,10 +116,13 @@ export function SpecPanel({ conversationId, revision }: SpecPanelProps) {
       try {
         const result = await api.setDesignParameter(conversationId, name, value);
         setLoaded({ kind: "ready", design: result.design });
+        const reach = result.changed
+          ? describeReach(result.diff)
+          : `${name} was already ${value}, so nothing changed.`;
         setLastEdit(
-          result.changed
-            ? describeReach(result.diff)
-            : `${name} was already ${value}, so nothing changed.`,
+          result.changed && result.design.modification.character === "after-placing-on-market"
+            ? `Changed after this machine was placed on the market. ${reach}`
+            : reach,
         );
       } catch (error: unknown) {
         setEditError(
@@ -111,6 +130,41 @@ export function SpecPanel({ conversationId, revision }: SpecPanelProps) {
         );
       } finally {
         setPending(null);
+      }
+    },
+    [conversationId],
+  );
+
+  const recordPlacing = useCallback(
+    async (day: string) => {
+      setPlacingError(null);
+      try {
+        const design = await api.recordPlacedOnMarket(conversationId, day);
+        setLoaded({ kind: "ready", design });
+      } catch (error: unknown) {
+        setPlacingError(
+          error instanceof ApiError ? error.message : "The date could not be recorded.",
+        );
+      }
+    },
+    [conversationId],
+  );
+
+  const exportTechnicalFile = useCallback(
+    async (design: DesignRead) => {
+      setExportError(null);
+      try {
+        const blob = await api.technicalFileBlob(conversationId);
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${design.name}-r${design.revision_number}-technical-file.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+      } catch (error: unknown) {
+        setExportError(
+          error instanceof ApiError ? error.message : "The technical file could not be exported.",
+        );
       }
     },
     [conversationId],
@@ -154,6 +208,8 @@ export function SpecPanel({ conversationId, revision }: SpecPanelProps) {
         <div className="space-y-3 border-t border-border px-3 py-2.5">
           {spec.description && <p className="text-xs text-muted">{spec.description}</p>}
 
+          <ModificationNoticeView notice={design.modification} />
+
           <ParameterList
             parameters={spec.parameters}
             pending={pending}
@@ -169,6 +225,31 @@ export function SpecPanel({ conversationId, revision }: SpecPanelProps) {
 
           <FeatureList features={spec.features} />
 
+          <PlacedOnMarketControl
+            key={design.placed_on_market_on ?? "unrecorded"}
+            recorded={design.placed_on_market_on}
+            onRecord={recordPlacing}
+            error={placingError}
+          />
+
+          <div className="space-y-1">
+            {/* Named for what it is: Kryova's part of a technical file, not
+                the file. The document itself says which Annex IV points are
+                the manufacturer's alone, and the label must not promise more. */}
+            <button
+              type="button"
+              onClick={() => exportTechnicalFile(design)}
+              className="rounded-sm border border-border px-2 py-0.5 text-xs focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+            >
+              Export contribution to the technical file
+            </button>
+            {exportError && (
+              <p role="alert" className="text-xs text-danger">
+                {exportError}
+              </p>
+            )}
+          </div>
+
           {/* The identity of this design version, and what an approval gate
               pins. Truncated because sixty-four hex characters in a side panel
               is noise, and shown at all because "which design was signed off"
@@ -179,6 +260,76 @@ export function SpecPanel({ conversationId, revision }: SpecPanelProps) {
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * The server's notice, shown only once the machine is on the market. A
+ * design-time notice is the ordinary case and rendering it above every design
+ * would be furniture; its absence is what design-time looks like.
+ */
+function ModificationNoticeView({ notice }: { notice: ModificationNotice }) {
+  if (notice.character !== "after-placing-on-market") return null;
+  return (
+    <div
+      role="note"
+      aria-label="Placed on the market"
+      className="rounded-sm border border-warning/40 bg-warning/5 px-2.5 py-2 text-xs"
+    >
+      <p className="font-medium text-warning">{notice.headline}</p>
+      <p className="mt-1 text-muted">{notice.detail}</p>
+      {notice.citations.length > 0 && (
+        <p className="mt-1 text-[11px] text-muted">
+          Regulation (EU) 2023/1230: {notice.citations.join(" · ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Where the manufacturer records the day a unit was first placed on the
+ * market. Recording again with a different day is a correction; there is no
+ * clear, because a machine does not stop having been placed on the market.
+ */
+function PlacedOnMarketControl({
+  recorded,
+  onRecord,
+  error,
+}: {
+  recorded: string | null;
+  onRecord: (day: string) => void;
+  error: string | null;
+}) {
+  const [day, setDay] = useState(recorded ?? "");
+  const changed = day !== "" && day !== recorded;
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center gap-2 text-xs text-muted">
+        <span className="shrink-0">
+          {recorded ? "Placed on the market" : "Placed on the market? Record the day"}
+        </span>
+        <input
+          type="date"
+          value={day}
+          onChange={(event) => setDay(event.target.value)}
+          className="rounded-sm border border-border bg-transparent px-1.5 py-0.5 font-mono text-xs focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+        />
+        <button
+          type="button"
+          disabled={!changed}
+          onClick={() => onRecord(day)}
+          className="rounded-sm border border-border px-2 py-0.5 text-xs disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-primary"
+        >
+          {recorded ? "Correct" : "Record"}
+        </button>
+      </label>
+      {error && (
+        <p role="alert" className="text-xs text-danger">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }
 

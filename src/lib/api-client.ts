@@ -409,6 +409,27 @@ export const api = {
    * panel disables those fields, so reaching this is a bug rather than a user
    * error, and the message is the one worth showing when it happens.
    */
+  /**
+   * Record the day a unit of this machine was first placed on the market
+   * (E19 task 5). From then on every read says a change is not design-time
+   * work. A future date comes back `422`; there is no way to clear it.
+   */
+  recordPlacedOnMarket: (conversationId: string, placedOnMarketOn: string) =>
+    mutatingRequest<DesignRead>(`/designs/${conversationId}/placed-on-market`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ placed_on_market_on: placedOnMarketOn }),
+    }),
+
+  /**
+   * Kryova's contribution to this machine's technical file (E19 task 3), as the
+   * JSON document the server assembles: organised by Annex IV, Part A of the
+   * Machinery Regulation, every artefact hashed, the whole file digested. A
+   * `Blob`, because it is a document to keep rather than a shape to render.
+   */
+  technicalFileBlob: (conversationId: string) =>
+    requestBlob(`/designs/${conversationId}/technical-file`),
+
   setDesignParameter: (conversationId: string, name: string, value: number) =>
     mutatingRequest<DesignEdited>(
       `/designs/${conversationId}/parameters/${encodeURIComponent(name)}`,
