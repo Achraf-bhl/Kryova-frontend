@@ -177,6 +177,11 @@ export function ChatView({
   // acts. A repeat over unchanged geometry costs a 304 — the render is
   // deterministic, so the ETag is a real content hash.
   const partRevision = busy ? turns.length : turns.length + 1;
+  // Bumped when the composer creates an attachment. The panel otherwise
+  // refreshes once per finished turn, which would leave a file the user just
+  // attached invisible until they sent a message — reading as an upload that
+  // silently failed.
+  const [attachRevision, setAttachRevision] = useState(0);
 
   // The greeting depends on the reader's clock, and a server rendering in UTC
   // would wish a user in Abidjan good evening at noon. `useSyncExternalStore`
@@ -447,7 +452,10 @@ export function ChatView({
                   picture: the spec is the truth, the attachments are the
                   evidence behind it, and the render is the consequence.
                   Renders nothing until something is attached. */}
-              <AttachmentPanel conversationId={liveConversationId} revision={partRevision} />
+              <AttachmentPanel
+                conversationId={liveConversationId}
+                revision={partRevision + attachRevision}
+              />
               <KernelPartView
                 conversationId={liveConversationId}
                 state={partState}
@@ -468,7 +476,9 @@ export function ChatView({
             attachSlot={
               <AttachPill
                 projectId={project}
+                conversationId={liveConversationId}
                 onAttached={(note) => setInput((previous) => note + previous)}
+                onAttachmentCreated={() => setAttachRevision((previous) => previous + 1)}
               />
             }
             statusSlot={
