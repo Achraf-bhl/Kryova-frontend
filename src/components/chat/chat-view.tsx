@@ -468,6 +468,10 @@ export function ChatView({
             attachSlot={
               <AttachPill
                 projectId={project}
+                // The live id, not the prop: a new chat has no conversation until the
+                // first turn creates one, and an attachment posted against null would
+                // land on no conversation and never reach the agent's turn.
+                conversationId={liveConversationId ?? conversationId}
                 onAttached={(note) => setInput((previous) => note + previous)}
               />
             }
