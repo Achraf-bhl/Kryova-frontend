@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { isGeometryFilename } from "@/components/chat/attach-pill";
+import { isGeometryFilename } from "@/lib/attach-routing";
 import {
   CHUNKED_THRESHOLD_BYTES,
   type DocumentUploadTransport,

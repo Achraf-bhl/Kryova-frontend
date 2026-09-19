@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Pill } from "@/components/ui/pill";
 import { BoltIcon, SendIcon, StopIcon } from "@/components/ui/icons";
@@ -24,6 +24,12 @@ export interface ComposerProps {
   statusSlot?: React.ReactNode;
   placeholder?: string;
   autoFocus?: boolean;
+  /**
+   * Files dropped on the composer. Absent means the composer takes no drops —
+   * a chat with no project has nowhere to put them, and a drop zone that
+   * silently swallowed a file would be worse than none.
+   */
+  onFilesDropped?: (files: File[]) => void;
 }
 
 /**
@@ -52,8 +58,17 @@ export function Composer({
   statusSlot,
   placeholder = "Describe a part, or ask about a run…",
   autoFocus = false,
+  onFilesDropped,
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [dropping, setDropping] = useState(false);
+
+  // Drag events fire on children too, so a naive `onDragLeave` clears the state
+  // the moment the pointer crosses the textarea. Counting enters against leaves
+  // is what keeps the highlight steady while moving across the box.
+  const dragDepth = useRef(0);
+
+  const takesDrops = Boolean(onFilesDropped);
 
   // Grow to fit, then scroll. Reset to `auto` first or the box can only ever
   // get taller — `scrollHeight` never shrinks below the height already set.
@@ -68,7 +83,50 @@ export function Composer({
   const canSend = value.trim().length > 0 && !busy;
 
   return (
-    <div className="k-composer px-3 pb-2 pt-3">
+    <div
+      className={`k-composer px-3 pb-2 pt-3${dropping ? " ring-2 ring-accent/60" : ""}`}
+      onDragEnter={
+        takesDrops
+          ? (event) => {
+              // Only a file drag. Dragging selected *text* across the composer is
+              // an ordinary thing to do and must not look like an upload.
+              if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+              dragDepth.current += 1;
+              setDropping(true);
+            }
+          : undefined
+      }
+      onDragOver={
+        takesDrops
+          ? (event) => {
+              if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+              // Without this the browser navigates to the file instead, losing
+              // the conversation.
+              event.preventDefault();
+            }
+          : undefined
+      }
+      onDragLeave={
+        takesDrops
+          ? () => {
+              dragDepth.current = Math.max(0, dragDepth.current - 1);
+              if (dragDepth.current === 0) setDropping(false);
+            }
+          : undefined
+      }
+      onDrop={
+        takesDrops
+          ? (event) => {
+              const files = Array.from(event.dataTransfer.files);
+              dragDepth.current = 0;
+              setDropping(false);
+              if (files.length === 0) return;
+              event.preventDefault();
+              onFilesDropped?.(files);
+            }
+          : undefined
+      }
+    >
       <label htmlFor="composer" className="sr-only">
         Message the Kryova agent
       </label>

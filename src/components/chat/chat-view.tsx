@@ -16,6 +16,7 @@ import { KernelPartView } from "@/components/kernel-part-view";
 import { MeshOrb } from "@/components/mesh-orb";
 import { PartIcon } from "@/components/ui/icons";
 import { useAgentChat } from "@/hooks/use-agent-chat";
+import { useAttachUpload } from "@/hooks/use-attach-upload";
 import { useCatiaStatus } from "@/hooks/use-catia-status";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { notifyConversationsChanged } from "@/lib/conversation-events";
@@ -160,6 +161,16 @@ export function ChatView({
   });
 
   const catia = useCatiaStatus(liveConversationId);
+  // One upload controller for both ways in — the pill and the composer's drop
+  // zone. The LIVE conversation id, not the prop: a new chat has no conversation
+  // until its first turn, and an attachment posted against null would reach no
+  // conversation and never enter the agent's turn.
+  const attach = useAttachUpload({
+    projectId: project,
+    conversationId: liveConversationId ?? conversationId,
+    onAttached: useCallback((note: string) => setInput((previous) => note + previous), []),
+  });
+
   const catiaDocument =
     catia.status?.document?.doc_name ?? (liveConversationId === conversationId ? boundDocument : null);
 
@@ -465,15 +476,9 @@ export function ChatView({
             deepAnalysis={allowMutations}
             onDeepAnalysisChange={setAllowMutations}
             autoFocus={empty}
+            onFilesDropped={project ? (files) => void attach.uploadAll(files) : undefined}
             attachSlot={
-              <AttachPill
-                projectId={project}
-                // The live id, not the prop: a new chat has no conversation until the
-                // first turn creates one, and an attachment posted against null would
-                // land on no conversation and never reach the agent's turn.
-                conversationId={liveConversationId ?? conversationId}
-                onAttached={(note) => setInput((previous) => note + previous)}
-              />
+              <AttachPill projectId={project} controller={attach} />
             }
             statusSlot={
               <CatiaChip state={catia.state} detail={catia.detail} document={catiaDocument} />
