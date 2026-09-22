@@ -7,6 +7,50 @@
 
 import { fetchWithRefresh } from "@/lib/api-client";
 
+/**
+ * One answer the user can give by pressing something.
+ *
+ * `detail` is not decoration and must be rendered: a button whose consequence
+ * the reader cannot see is the failure this whole surface exists to avoid.
+ * `needs_reason` means the answer is incomplete without words — a gate
+ * rejection carries one, because what happens next depends entirely on why.
+ */
+export type InterventionChoice = {
+  id: string;
+  label: string;
+  detail: string;
+  needs_reason: boolean;
+};
+
+/**
+ * A decision Kryova cannot take, put where the person already is.
+ *
+ * **There is deliberately no default, no `recommended` and no pre-selection**,
+ * and the backend enforces that at construction. Do not add one here either: a
+ * default on this surface is the product answering its own question and then
+ * recording a person's name against the answer.
+ *
+ * `answer_in_words` is always true. The choices are the *common* answers, never
+ * the possible ones, so the composer must stay reachable — a list that cannot
+ * be escaped stops being a question and becomes a form.
+ */
+export type Intervention = {
+  kind: "repeated-failure" | "approval";
+  /** What has to be decided. */
+  question: string;
+  /** Why the turn stopped — the tool, the subject and how many times. */
+  cause: string;
+  /** What it is about, or "" when the call's arguments named nothing. */
+  subject: string;
+  tool: string;
+  /** The machine's own words, verbatim. Never summarise this in the UI. */
+  quote: string;
+  /** Where an answer goes for the approval kind; null means reply in the chat. */
+  gate_id: string | null;
+  answer_in_words: boolean;
+  choices: InterventionChoice[];
+};
+
 export type AgentEvent =
   | { type: "start"; conversation_id: string }
   /**
@@ -82,7 +126,21 @@ export type AgentEvent =
       steps: number;
       prompt_tokens?: number;
       completion_tokens?: number;
+      /**
+       * The same decision the `intervention` event carries, repeated here.
+       *
+       * Not redundancy: a client that reconnects mid-turn replays from the
+       * ten-minute buffer and can land *after* the `intervention` event went
+       * past, and a decision prompt is the one thing a dropped event must not
+       * lose. `null` on a turn that needs nobody.
+       */
+      intervention?: Intervention | null;
     }
+  /**
+   * Kryova needs a person, and says so as a decision rather than as prose
+   * (backend `app/ai/intervention.py`, 2026-09-22). Arrives before `done`.
+   */
+  | ({ type: "intervention" } & Intervention)
   /**
    * Emitted by the route (not the loop) after a turn settles, when the
    * conversation has just been titled. Nothing here consumes it yet; it is in

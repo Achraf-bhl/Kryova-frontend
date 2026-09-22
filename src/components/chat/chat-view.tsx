@@ -8,6 +8,7 @@ import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { Composer } from "@/components/chat/composer";
 import { CopyButton } from "@/components/chat/copy-button";
+import { InterventionPrompt } from "@/components/chat/intervention-prompt";
 import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { AttachmentPanel } from "@/components/attachments/attachment-panel";
@@ -361,11 +362,33 @@ export function ChatView({
                         : turn.stopReason === "repeated_calls"
                           ? "The agent stopped because it kept repeating a call that had already been refused. Tell it what to do differently — it keeps everything it built."
                           : turn.stopReason === "needs_input"
-                            ? "The agent stopped to ask you something rather than keep retrying — the question is at the end of its answer. Answer it and it carries on from what is built."
+                            ? // Since 2026-09-22 the question is a prompt with
+                              // options below this line, so pointing the reader
+                              // at "the end of its answer" would send them past
+                              // the thing they are looking for. The fallback
+                              // wording stays honest when no prompt arrived —
+                              // the question is still in the prose either way.
+                              turn.intervention
+                              ? "The agent stopped to ask you something rather than keep retrying. Answer below and it carries on from what is built."
+                              : "The agent stopped to ask you something rather than keep retrying — the question is at the end of its answer. Answer it and it carries on from what is built."
                             : turn.stopReason === "awaiting_approval"
-                              ? "The agent reached a checkpoint that needs sign-off. Nothing past it has run; approve or reject it under Approvals and it carries on from there."
+                              ? turn.intervention
+                                ? "The agent reached a checkpoint that needs sign-off. Nothing past it has run — decide below, or open it under Approvals."
+                                : "The agent reached a checkpoint that needs sign-off. Nothing past it has run; approve or reject it under Approvals and it carries on from there."
                               : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
                     </p>
+                  )}
+                  {/* The decision itself, under the answer it interrupted.
+                      Below the banner on purpose: the banner says the turn
+                      stopped, and this says what to do about it — a prompt
+                      above the explanation is a question with its context
+                      hidden behind it. */}
+                  {turn.intervention && (
+                    <InterventionPrompt
+                      intervention={turn.intervention}
+                      disabled={busy}
+                      onAnswer={(text) => void send(text)}
+                    />
                   )}
                   {turn.error && (
                     <div className="rounded-md border border-danger/40 bg-danger/5 px-3 py-2 text-sm text-danger">
