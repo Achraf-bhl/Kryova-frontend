@@ -22,19 +22,7 @@ const PROTECTED_PREFIXES = ["/dashboard"];
 /** Routes that render dynamically on every request — see `isDynamicallyRendered`. */
 const DYNAMIC_PREFIXES = ["/dashboard"];
 
-/**
- * Cookies whose presence means "there is a session to resume".
- *
- * Not `kryova_refresh`: the backend scopes it to `/api/v1/auth`, so it is never
- * sent to a page request and checking for it here could not succeed. The gate
- * therefore ran on the 15-minute access cookie alone, and anyone who reloaded or
- * opened a link more than fifteen minutes after their last API call was sent to
- * /login with days left on their refresh token (measured 2026-09-25).
- * `kryova_csrf` is path `/`, is issued and cleared with the session, and has the
- * refresh token's lifetime -- so it is present exactly when a refresh can
- * succeed. The API still decides; this only decides which page to render.
- */
-const SESSION_COOKIES = ["kryova_access", "kryova_csrf"];
+const SESSION_COOKIES = ["kryova_access", "kryova_refresh"];
 
 function underPrefix(pathname: string, prefixes: readonly string[]): boolean {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
