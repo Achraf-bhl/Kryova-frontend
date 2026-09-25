@@ -204,7 +204,7 @@ async function postRefresh(): Promise<boolean> {
 }
 
 /** Refresh the session, coalescing concurrent callers onto one request. */
-function refreshSession(): Promise<boolean> {
+export function refreshSession(): Promise<boolean> {
   inFlightRefresh ??= postRefresh().finally(() => {
     inFlightRefresh = null;
   });

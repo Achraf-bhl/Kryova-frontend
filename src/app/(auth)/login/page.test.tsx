@@ -97,6 +97,49 @@ describe("LoginPage", () => {
 });
 
 /**
+ * A page load after fifteen idle minutes arrives here with an expired access
+ * cookie and a live refresh token the route gate cannot see (it is scoped to
+ * /api/v1/auth). Measured 2026-09-25: the visitor was asked to sign in again
+ * with days left on their session.
+ */
+describe("LoginPage resuming a session", () => {
+  function setSessionCookie() {
+    document.cookie = "kryova_csrf=live-csrf; path=/";
+  }
+
+  afterEach(() => {
+    document.cookie = "kryova_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/";
+  });
+
+  it("renews the session and goes on without asking for a password", async () => {
+    setSessionCookie();
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) });
+
+    renderLoginPage();
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/dashboard"));
+    expect(String(mockFetch.mock.calls[0][0])).toContain("/auth/refresh");
+  });
+
+  it("stays on the form when the session cannot be renewed", async () => {
+    setSessionCookie();
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) });
+
+    renderLoginPage();
+
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(1));
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Password")).toBeInTheDocument();
+  });
+
+  it("does not try to resume when there is no session at all", () => {
+    renderLoginPage();
+
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * P1.7. `/auth/login` now answers with a session **or** a challenge, and this
  * is the one route where reading one as the other means showing a signed-out
  * person a dashboard.

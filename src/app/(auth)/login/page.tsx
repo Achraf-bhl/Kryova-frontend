@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { refreshSession } from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import type { MfaChallenge } from "@/types/api";
@@ -51,6 +52,27 @@ function LoginForm() {
   // every deep link land on the home screen. `safeRedirectPath` is what stops
   // the same parameter becoming an open redirect.
   const goOnwards = () => router.push(safeRedirectPath(searchParams.get("next")));
+
+  // Resume a session the route gate could not see. The dashboard renders on the
+  // server with the 15-minute access cookie, and the refresh cookie is scoped to
+  // /api/v1/auth, so a page load after fifteen idle minutes lands here with days
+  // left on its refresh token (measured 2026-09-25). The browser *does* send the
+  // refresh cookie to the API, so one refresh from here renews the access cookie
+  // and the visitor goes on to where they were headed. `kryova_csrf` lives and
+  // dies with the session, so without it there is nothing to resume.
+  useEffect(() => {
+    if (!/(?:^|;\s*)kryova_csrf=/.test(document.cookie)) return;
+    let cancelled = false;
+    void refreshSession().then((renewed) => {
+      if (!cancelled && renewed) goOnwards();
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Once, on arrival: a failed resume leaves the form, and typing into it
+    // must not retry the refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
