@@ -1,6 +1,38 @@
+import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
 
-import { buildCsp, isAuthRoute, isDynamicallyRendered, isProtectedRoute } from "./proxy";
+import {
+  buildCsp,
+  hasSessionCookie,
+  isAuthRoute,
+  isDynamicallyRendered,
+  isProtectedRoute,
+} from "./proxy";
+
+function pageRequest(cookie: string): NextRequest {
+  return new NextRequest("http://127.0.0.1:3000/dashboard", { headers: { cookie } });
+}
+
+describe("session detection", () => {
+  it("keeps a session whose access cookie has expired but whose csrf cookie has not", () => {
+    // What a browser sends to /dashboard sixteen minutes after its last API call:
+    // the access cookie has aged out, and the refresh cookie is path-scoped to
+    // /api/v1/auth so it never arrives here at all.
+    expect(hasSessionCookie(pageRequest("kryova_csrf=abc"))).toBe(true);
+  });
+
+  it("still counts a live access cookie", () => {
+    expect(hasSessionCookie(pageRequest("kryova_access=token"))).toBe(true);
+  });
+
+  it("does not rely on the refresh cookie, which a page request never carries", () => {
+    expect(hasSessionCookie(pageRequest("kryova_refresh=token"))).toBe(false);
+  });
+
+  it("finds no session in unrelated cookies", () => {
+    expect(hasSessionCookie(pageRequest("theme=dark"))).toBe(false);
+  });
+});
 
 function directive(csp: string, name: string): string | undefined {
   return csp
