@@ -1,6 +1,7 @@
 import { Sidebar } from "./_components/sidebar";
 
 import { ErrorBoundary } from "@/components/error-boundary";
+import { AiBudgetBanner } from "@/components/ai-budget-banner";
 import { PlatformBanner } from "@/components/platform-banner";
 import { fetchConversationsSafe, fetchCurrentUser } from "@/lib/server-api";
 
@@ -30,6 +31,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
             thing the user just tried did not work, so it must be visible on
             whichever page they were on when it did not. */}
         <PlatformBanner />
+        {/* Beside it for the same reason: a spending cap is why the next request fails. */}
+        <AiBudgetBanner />
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>
     </div>

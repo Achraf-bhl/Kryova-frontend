@@ -2,6 +2,7 @@ import { parseBinarySurfaceField, surfaceFieldFromJson } from "@/lib/surface-fie
 import type { SurfaceFieldArrays } from "@/lib/surface-field";
 import type {
   AIStatus,
+  AIUsage,
   DeviceSession,
   DomainRole,
   Invitation,
@@ -765,6 +766,7 @@ export const api = {
   },
 
   aiStatus: () => request<AIStatus>("/ai/status"),
+  aiUsage: () => request<AIUsage>("/ai/usage"),
 
   // -- conversations ---------------------------------------------------------
   // The chat is the product's front door, so these are read on nearly every

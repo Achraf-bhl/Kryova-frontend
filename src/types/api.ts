@@ -459,6 +459,56 @@ export interface AIStatus {
   detail: string | null;
 }
 
+/** What this user has spent on the model today (UTC), split the way it is billed. Money is
+ * integer micro-dollars (1e-6 USD): a period total is an exact sum and a float drifts. */
+export interface AIDayUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  /** A subset of `prompt_tokens`, never added to it. */
+  cached_prompt_tokens: number;
+  cost_micro_usd: number;
+  /** Calls on a model with no configured price, which the cost cannot include. */
+  unpriced_calls: number;
+}
+
+export interface AIUserAllowance {
+  /** 0 means unlimited. */
+  daily_token_budget: number;
+  /** 0 means unlimited. */
+  daily_cost_budget_micro_usd: number;
+}
+
+export interface AIOrgCap {
+  period: string;
+  /** 0 means no cap in force. */
+  cap_micro_usd: number;
+  source: string;
+  spent_micro_usd: number;
+  /** Whole percent of the cap spent; null when there is no cap. */
+  percent: number | null;
+  resets_on: string;
+}
+
+/** One line for the in-app banner (ROAD_TO_10 1.3, P11.9). */
+export interface AIOrgNotice {
+  period: string;
+  percent: number;
+  /** `warning` from 80 %, `exhausted` at 100 %. */
+  level: string;
+  message: string;
+}
+
+export interface AIUsage {
+  today: AIDayUsage;
+  allowance: AIUserAllowance;
+  organisation_id: string | null;
+  organisation_caps: AIOrgCap[];
+  organisation_unpriced_calls: number;
+  notices: AIOrgNotice[];
+  /** Why the next turn would be refused right now, or null if it would not be. */
+  blocked: string | null;
+}
+
 export interface Finding {
   title: string;
   detail: string;
