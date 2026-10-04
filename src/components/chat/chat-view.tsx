@@ -21,6 +21,7 @@ import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { AttachmentPanel } from "@/components/attachments/attachment-panel";
 import { SpecPanel } from "@/components/design/spec-panel";
+import { MemoryProposals } from "@/components/project-memory/memory-proposals";
 import { KernelPartView } from "@/components/kernel-part-view";
 import { MeshOrb } from "@/components/mesh-orb";
 import { PartIcon } from "@/components/ui/icons";
@@ -618,6 +619,9 @@ export function ChatView({
                   evidence behind it, and the render is the consequence.
                   Renders nothing until something is attached. */}
               <AttachmentPanel conversationId={liveConversationId} revision={partRevision} />
+              {/* What the assistant suggested remembering about the project and has
+                  not been told yet. Renders nothing unless there is one waiting. */}
+              {project && <MemoryProposals projectId={project} revision={partRevision} />}
               <KernelPartView
                 conversationId={liveConversationId}
                 state={partState}

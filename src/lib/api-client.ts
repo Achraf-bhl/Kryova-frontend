@@ -42,6 +42,8 @@ import type {
   MfaStatus,
   PlatformState,
   ProjectCreate,
+  ProjectMemoryPage,
+  ProjectMemoryRead,
   ProjectRead,
   ResultInterpretation,
   SimulationCreate,
@@ -388,6 +390,40 @@ export const api = {
 
   deleteAttachment: (attachmentId: string) =>
     mutatingRequest<void>(`/attachments/${attachmentId}`, { method: "DELETE" }),
+
+  // --- Project memory (ROAD_TO_10 2.7) -------------------------------------
+
+  /**
+   * Everything a project remembers, confirmed facts and the agent's waiting
+   * proposals together, oldest first. A viewer may read; writing is a member's.
+   */
+  listProjectMemory: (projectId: string) =>
+    request<ProjectMemoryPage>(`/projects/${projectId}/memory?page=1&page_size=100`),
+
+  /** A fact the person typed — confirmed the moment it is saved (200 if already held). */
+  addProjectMemory: (projectId: string, text: string) =>
+    mutatingRequest<ProjectMemoryRead>(`/projects/${projectId}/memory`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
+
+  editProjectMemory: (projectId: string, memoryId: string, text: string) =>
+    mutatingRequest<ProjectMemoryRead>(`/projects/${projectId}/memory/${memoryId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    }),
+
+  /** The one door from the agent's suggestion to something the model may read. */
+  confirmProjectMemory: (projectId: string, memoryId: string) =>
+    mutatingRequest<ProjectMemoryRead>(`/projects/${projectId}/memory/${memoryId}/confirm`, {
+      method: "POST",
+    }),
+
+  /** Delete a fact, or dismiss a proposal: the same call, because the user's meaning is the same. */
+  forgetProjectMemory: (projectId: string, memoryId: string) =>
+    mutatingRequest<void>(`/projects/${projectId}/memory/${memoryId}`, { method: "DELETE" }),
 
   // --- The design record (P5.3, P5.6) --------------------------------------
 

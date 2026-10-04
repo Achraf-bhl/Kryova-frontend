@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CatiaBridgePanel } from "@/components/catia-bridge-panel";
+import { ProjectMemoryPanel } from "@/components/project-memory/memory-panel";
 import { SharePanel, TransferPanel } from "@/components/sharing/share-panel";
 import { api } from "@/lib/api-client";
 import { uploadGeometryFile } from "@/lib/chunked-upload";
@@ -137,6 +138,9 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
           )}
         </div>
       </section>
+
+      {/* What the assistant is told about this project in every conversation */}
+      <ProjectMemoryPanel projectId={projectId} />
 
       {/* Simulations */}
       <section>

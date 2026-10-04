@@ -897,6 +897,39 @@ export interface AttachmentPage {
   page_size: number;
 }
 
+/**
+ * One thing worth knowing about a project in every conversation about it
+ * (ROAD_TO_10 2.7): "bolts are ISO 4762 A2-70", "drawings are in mm".
+ *
+ * `proposed` is the agent's own suggestion waiting for the user. **Only a
+ * `confirmed` fact is ever sent to the model** — the server enforces it, and the
+ * wording here (Keep / Dismiss, "suggested") exists so the user knows which half
+ * they are looking at. `author_id: null` with `author: "agent"` means the agent,
+ * not "unknown".
+ */
+export type ProjectMemoryState = "proposed" | "confirmed";
+
+export interface ProjectMemoryRead {
+  id: string;
+  text: string;
+  state: ProjectMemoryState;
+  author: "user" | "agent";
+  author_id: string | null;
+  /** The conversation the agent noticed it in, while that still exists. */
+  conversation_id: string | null;
+  created_at: string;
+  confirmed_at: string | null;
+}
+
+export interface ProjectMemoryPage {
+  items: ProjectMemoryRead[];
+  total: number;
+  page: number;
+  page_size: number;
+  /** The most a project keeps, so the panel says "12 of 40" without hard-coding it. */
+  limit: number;
+}
+
 export interface ExtractedFragment {
   kind: string;
   text: string;

@@ -288,3 +288,66 @@ describe("conversation search, pin, branch and rewind (ROAD_TO_10 2.5 and 2.6)",
     });
   });
 });
+
+describe("project memory calls (ROAD_TO_10 2.7)", () => {
+  const lastCall = () => {
+    const [url, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    return { url: String(url), init: init as RequestInit };
+  };
+
+  it("reads one page of up to a hundred, which is every fact a project may keep", async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0, page: 1, page_size: 100, limit: 40 }));
+    await api.listProjectMemory("p-1");
+
+    expect(lastCall().url).toContain("/projects/p-1/memory?page=1&page_size=100");
+    expect(lastCall().init.method ?? "GET").toBe("GET");
+  });
+
+  it("adds with a POST of the text, carrying the CSRF token", async () => {
+    mockFetch.mockResolvedValueOnce(ok({ id: "m-1" }, 201));
+    await api.addProjectMemory("p-1", "Units are mm.");
+
+    expect(lastCall().url).toMatch(/\/projects\/p-1\/memory$/);
+    expect(lastCall().init.method).toBe("POST");
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({ text: "Units are mm." });
+    expect(new Headers(lastCall().init.headers).get("x-csrf-token")).toBe("test-csrf");
+  });
+
+  it("rewords with a PATCH, not a POST that would add a second fact", async () => {
+    mockFetch.mockResolvedValueOnce(ok({ id: "m-1" }));
+    await api.editProjectMemory("p-1", "m-1", "Units are mm and N.");
+
+    expect(lastCall().url).toMatch(/\/projects\/p-1\/memory\/m-1$/);
+    expect(lastCall().init.method).toBe("PATCH");
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({ text: "Units are mm and N." });
+    expect(new Headers(lastCall().init.headers).get("x-csrf-token")).toBe("test-csrf");
+  });
+
+  it("confirms by POST to the confirm path, with no body", async () => {
+    mockFetch.mockResolvedValueOnce(ok({ id: "m-1" }));
+    await api.confirmProjectMemory("p-1", "m-1");
+
+    expect(lastCall().url).toMatch(/\/projects\/p-1\/memory\/m-1\/confirm$/);
+    expect(lastCall().init.method).toBe("POST");
+    expect(lastCall().init.body).toBeUndefined();
+    expect(new Headers(lastCall().init.headers).get("x-csrf-token")).toBe("test-csrf");
+  });
+
+  it("forgets with a DELETE and tolerates the empty 204", async () => {
+    mockFetch.mockResolvedValueOnce(ok(undefined, 204));
+    await expect(api.forgetProjectMemory("p-1", "m-1")).resolves.toBeUndefined();
+
+    expect(lastCall().url).toMatch(/\/projects\/p-1\/memory\/m-1$/);
+    expect(lastCall().init.method).toBe("DELETE");
+    // A delete is a mutation: without the token the server refuses it.
+    expect(new Headers(lastCall().init.headers).get("x-csrf-token")).toBe("test-csrf");
+  });
+
+  it("hands back the server's refusal in words", async () => {
+    mockFetch.mockResolvedValueOnce(fail(409, "This project already holds 40 facts."));
+    await expect(api.addProjectMemory("p-1", "x")).rejects.toMatchObject({
+      status: 409,
+      message: "This project already holds 40 facts.",
+    });
+  });
+});
