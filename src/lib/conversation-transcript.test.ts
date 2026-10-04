@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { NextAction } from "@/lib/agent-stream";
-import { conversationToTurns } from "@/lib/conversation-transcript";
+import {
+  branchPointAt,
+  branchPointBefore,
+  conversationToTurns,
+  dropLastExchange,
+  lastTypedIndex,
+} from "@/lib/conversation-transcript";
+import type { Turn } from "@/lib/conversation-transcript";
 import type { ConversationMessage } from "@/types/conversation";
 
 function message(partial: Partial<ConversationMessage> & { sequence: number }): ConversationMessage {
@@ -174,7 +181,8 @@ describe("a continuation is an act, not the user's words (2.2)", () => {
     const turns = conversationToTurns([
       message({ sequence: 1, role: "user", content: "continue please" }),
     ]);
-    expect(turns[0]).toEqual({ id: "m-1", role: "user", content: "continue please" });
+    // Exact on purpose: the point is that no `continuation` key appears.
+    expect(turns[0]).toEqual({ id: "m-1", sequence: 1, role: "user", content: "continue please" });
   });
 
   it("puts the stored next action on the newest assistant turn only", () => {
@@ -214,5 +222,133 @@ describe("a continuation is an act, not the user's words (2.2)", () => {
       null,
     );
     expect(turns.some((turn) => turn.nextAction)).toBe(false);
+  });
+});
+
+describe("sequence and branchability", () => {
+  const stored = [
+    message({ sequence: 0, role: "user", content: "build a plate" }),
+    message({ sequence: 1, role: "assistant", content: null }),
+    message({ sequence: 2, role: "tool", tool_call_id: "c1", tool_name: "catia_new_part" }),
+    message({ sequence: 3, role: "assistant", content: "Built.", branchable: true }),
+    message({ sequence: 4, role: "user", content: "now a hole" }),
+    message({ sequence: 5, role: "assistant", content: "Let me cut that." }),
+  ];
+
+  it("keeps each turn's stored sequence, so an action can name the message it means", () => {
+    const turns = conversationToTurns(stored);
+    expect(turns.map((turn) => turn.sequence)).toEqual([0, 3, 4, 5]);
+  });
+
+  it("carries the server's verdict on where a branch may start", () => {
+    const turns = conversationToTurns(stored);
+    expect(turns.map((turn) => Boolean(turn.branchable))).toEqual([false, true, false, false]);
+  });
+});
+
+describe("rewinding the newest message", () => {
+  const user = (id: string, content: string, extra: Partial<Turn> = {}): Turn => ({
+    id,
+    role: "user",
+    content,
+    ...extra,
+  });
+  const assistant = (id: string, content: string, extra: Partial<Turn> = {}): Turn => ({
+    id,
+    role: "assistant",
+    content,
+    ...extra,
+  });
+
+  it("finds the newest message the person typed, past a Continue divider", () => {
+    const turns = [
+      user("u1", "build it"),
+      assistant("a1", "partway"),
+      user("c1", "Continued", { continuation: true }),
+      assistant("a2", "done"),
+    ];
+    expect(lastTypedIndex(turns)).toBe(0);
+  });
+
+  it("reports -1 when the person has written nothing", () => {
+    expect(lastTypedIndex([assistant("a", "hello")])).toBe(-1);
+    expect(lastTypedIndex([])).toBe(-1);
+  });
+
+  it("drops the typed message and everything after it, as the server does", () => {
+    const turns = [
+      user("u1", "one"),
+      assistant("a1", "first"),
+      user("u2", "two"),
+      assistant("a2", "second"),
+      user("c", "Continued", { continuation: true }),
+    ];
+    expect(dropLastExchange(turns).map((turn) => turn.id)).toEqual(["u1", "a1"]);
+  });
+
+  it("leaves the thread alone when there is nothing to drop", () => {
+    const turns = [assistant("a", "hello")];
+    expect(dropLastExchange(turns)).toEqual(turns);
+  });
+
+  it("does not mutate what it is given", () => {
+    const turns = [user("u", "x"), assistant("a", "y")];
+    dropLastExchange(turns);
+    expect(turns).toHaveLength(2);
+  });
+});
+
+describe("where a branch may start", () => {
+  const answer = (id: string, sequence: number | undefined, extra: Partial<Turn> = {}): Turn => ({
+    id,
+    role: "assistant",
+    content: "an answer",
+    ...(sequence === undefined ? {} : { sequence }),
+    ...extra,
+  });
+  const typed = (id: string): Turn => ({ id, role: "user", content: "x" });
+
+  it("offers a stored answer the server marked, at its own sequence", () => {
+    const turns = [answer("a", 3, { branchable: true })];
+    expect(branchPointAt(turns, 0, false)).toEqual({ fromSequence: 3 });
+  });
+
+  it("offers nothing under a stored message the server did not mark", () => {
+    expect(branchPointAt([answer("a", 5)], 0, false)).toBeNull();
+  });
+
+  it("offers nothing under a message of the person's own", () => {
+    expect(branchPointAt([typed("u")], 0, false)).toBeNull();
+  });
+
+  it("offers the newest live answer with no sequence, so the server picks the newest", () => {
+    const turns = [typed("u"), answer("live", undefined)];
+    expect(branchPointAt(turns, 1, false)).toEqual({ fromSequence: undefined });
+  });
+
+  it("does not guess for an older live answer, or while a turn is running", () => {
+    const turns = [answer("live-1", undefined), typed("u"), answer("live-2", undefined)];
+    expect(branchPointAt(turns, 0, false)).toBeNull();
+    expect(branchPointAt(turns, 2, true)).toBeNull();
+  });
+
+  it("offers nothing under a turn that ended in an error, which stored no answer", () => {
+    expect(branchPointAt([answer("e", undefined, { error: "boom" })], 0, false)).toBeNull();
+  });
+
+  it("finds the answer before a message, for a retry the server refused", () => {
+    const turns = [
+      typed("u1"),
+      answer("a1", 1, { branchable: true }),
+      typed("u2"),
+      answer("a2", 3, { branchable: true }),
+      typed("u3"),
+    ];
+    expect(branchPointBefore(turns, 4)).toEqual({ fromSequence: 3 });
+    expect(branchPointBefore(turns, 2)).toEqual({ fromSequence: 1 });
+  });
+
+  it("has no earlier answer to offer for the first message", () => {
+    expect(branchPointBefore([typed("u1"), answer("a1", 1, { branchable: true })], 0)).toBeNull();
   });
 });

@@ -29,6 +29,10 @@ import { onConversationsChanged } from "@/lib/conversation-events";
 import type { UserRead } from "@/types/api";
 import type { ConversationSummary } from "@/types/conversation";
 
+/** The server refuses a one-character search, so the box does not send one. */
+const SEARCH_MIN_CHARS = 2;
+const SEARCH_DEBOUNCE_MS = 250;
+
 const NAV = [
   { href: "/dashboard/projects", label: "Projects", Icon: PartIcon },
   { href: "/dashboard/runs", label: "Runs", Icon: RunsIcon },
@@ -59,6 +63,15 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  // What the server found for the current query (2.6): titles *and* the user's own
+  // words. Null until it answers, and whenever the query is too short to send — the
+  // list then falls back to filtering the titles already on screen.
+  // Keyed by the query it answered, so a result is only ever shown beside the text
+  // that produced it — which is also what makes "too short to send" need no reset.
+  const [found, setFound] = useState<{
+    query: string;
+    items: ConversationSummary[];
+  } | null>(null);
 
   const reload = useCallback(async () => {
     try {
@@ -69,6 +82,31 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
       // because one poll missed would be worse than showing it slightly stale.
     }
   }, []);
+
+  // Server search, debounced. The titles on screen filter instantly (below); this
+  // adds the conversations whose *messages* match, which only the server can see.
+  // A response for a query the person has since changed is dropped, not shown.
+  const needle = query.trim();
+  const searchable = needle.length >= SEARCH_MIN_CHARS;
+  useEffect(() => {
+    if (!searchable) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      api
+        .listConversations(1, 30, needle)
+        .then((page) => {
+          if (current) setFound({ query: needle, items: page.items });
+        })
+        .catch(() => {
+          // The title filter is still on screen; a failed search is not worth an alert.
+          if (current) setFound(null);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [needle, searchable]);
 
   // The chat view fires this when a turn settles, so a new conversation appears
   // (with its generated title) without a router navigation that would cut the
@@ -89,27 +127,63 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  const answered = searchable && found?.query === needle ? found.items : null;
+
   const groups = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    const filtered = needle
-      ? conversations.filter((item) => item.title.toLowerCase().includes(needle))
-      : conversations;
-    return groupConversations(filtered);
-  }, [conversations, query]);
+    const lowered = needle.toLowerCase();
+    const shown =
+      answered ??
+      (lowered
+        ? conversations.filter((item) => item.title.toLowerCase().includes(lowered))
+        : conversations);
+    return groupConversations(shown);
+  }, [answered, conversations, needle]);
+
+  /** Apply one change to a row wherever it is held: the list and the search results. */
+  const patchConversation = useCallback(
+    (conversationId: string, change: Partial<ConversationSummary>) => {
+      const apply = (list: ConversationSummary[]) =>
+        list.map((item) =>
+          item.conversation_id === conversationId ? { ...item, ...change } : item,
+        );
+      setConversations(apply);
+      setFound((previous) =>
+        previous ? { ...previous, items: apply(previous.items) } : previous,
+      );
+    },
+    [],
+  );
 
   const removeConversation = useCallback((conversationId: string) => {
-    setConversations((previous) =>
-      previous.filter((item) => item.conversation_id !== conversationId),
+    const keep = (list: ConversationSummary[]) =>
+      list.filter((item) => item.conversation_id !== conversationId);
+    setConversations(keep);
+    setFound((previous) =>
+      previous ? { ...previous, items: keep(previous.items) } : previous,
     );
   }, []);
 
-  const renameConversation = useCallback((conversationId: string, title: string) => {
-    setConversations((previous) =>
-      previous.map((item) =>
-        item.conversation_id === conversationId ? { ...item, title } : item,
-      ),
-    );
-  }, []);
+  const renameConversation = useCallback(
+    (conversationId: string, title: string) => patchConversation(conversationId, { title }),
+    [patchConversation],
+  );
+
+  // Called once the server has kept the pin. A new pin goes to the front, which is
+  // where the server puts it — newest pin first — and the reload that follows is
+  // the truth; this only keeps the row from sitting in the wrong place for it.
+  const pinConversation = useCallback(
+    (conversationId: string, pinned: boolean) => {
+      patchConversation(conversationId, { pinned });
+      if (!pinned) return;
+      setConversations((previous) => {
+        const moved = previous.find((item) => item.conversation_id === conversationId);
+        return moved
+          ? [moved, ...previous.filter((item) => item.conversation_id !== conversationId)]
+          : previous;
+      });
+    },
+    [patchConversation],
+  );
 
   const content = (
     <div className="flex h-full flex-col gap-3 p-3">
@@ -194,8 +268,8 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
         <div className="k-scroll -mr-1 min-h-0 flex-1 overflow-y-auto pr-1">
           {groups.length === 0 ? (
             <p className="px-2 py-6 text-xs leading-relaxed text-faint">
-              {query
-                ? `No chat matches “${query}”.`
+              {needle
+                ? `No chat matches “${needle}”.`
                 : "Your chats will collect here. Start one and it keeps its CATIA document."}
             </p>
           ) : (
@@ -212,6 +286,8 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
                       active={pathname === `/dashboard/c/${conversation.conversation_id}`}
                       onDeleted={removeConversation}
                       onRenamed={renameConversation}
+                      onPinned={pinConversation}
+                      onPinSettled={() => void reload()}
                     />
                   ))}
                 </ul>

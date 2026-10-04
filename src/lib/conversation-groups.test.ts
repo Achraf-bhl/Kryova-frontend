@@ -86,3 +86,46 @@ describe("groupConversations", () => {
     expect(input.map((item) => item.conversation_id)).toEqual(["a", "b"]);
   });
 });
+
+describe("pinned conversations", () => {
+  const pinned = (id: string, updatedAt: string): ConversationSummary => ({
+    ...conversation(id, updatedAt),
+    pinned: true,
+  });
+
+  it("puts pinned conversations first, whatever their age", () => {
+    const groups = groupConversations(
+      [conversation("today", local(2026, 8, 29, 9)), pinned("ancient", local(2026, 1, 1))],
+      now,
+    );
+
+    expect(groups.map((group) => group.label)).toEqual(["Pinned", "Today"]);
+    expect(groups[0].items.map((item) => item.conversation_id)).toEqual(["ancient"]);
+  });
+
+  it("keeps the server's order inside Pinned, so working in one does not move it", () => {
+    // The server sends the newest pin first. `a` is the most recently *active* but
+    // was pinned last-but-one; sorting by activity here would swap them.
+    const groups = groupConversations(
+      [pinned("newest-pin", local(2026, 3, 1)), pinned("older-pin", local(2026, 8, 29, 9))],
+      now,
+    );
+
+    expect(groups[0].items.map((item) => item.conversation_id)).toEqual([
+      "newest-pin",
+      "older-pin",
+    ]);
+  });
+
+  it("does not list a pinned conversation a second time under its date", () => {
+    const groups = groupConversations([pinned("p", local(2026, 8, 29, 9))], now);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].label).toBe("Pinned");
+  });
+
+  it("makes no Pinned group when nothing is pinned", () => {
+    const groups = groupConversations([conversation("a", local(2026, 8, 29))], now);
+    expect(groups.map((group) => group.label)).toEqual(["Today"]);
+  });
+});

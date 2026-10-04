@@ -14,6 +14,14 @@ export interface Turn {
   id: string;
   role: "user" | "assistant";
   content: string;
+  /**
+   * The stored message this turn was drawn from. Absent on a turn that arrived live
+   * and has not been reloaded: the stream does not report sequence numbers, and the
+   * UI must not guess one.
+   */
+  sequence?: number;
+  /** An answer a branch may start at (2.5), as the server marked it. */
+  branchable?: boolean;
   steps?: StepView[];
   /**
    * A user turn the *server* wrote because Continue was pressed (2.2). Drawn as
@@ -104,13 +112,19 @@ export function conversationToTurns(
         // The stored text is the model's instruction; the reader sees the act.
         turns.push({
           id: `m-${message.sequence}`,
+          sequence: message.sequence,
           role: "user",
           content: "Continued",
           continuation: true,
         });
         continue;
       }
-      turns.push({ id: `m-${message.sequence}`, role: "user", content });
+      turns.push({
+        id: `m-${message.sequence}`,
+        sequence: message.sequence,
+        role: "user",
+        content,
+      });
       continue;
     }
 
@@ -120,8 +134,10 @@ export function conversationToTurns(
 
     turns.push({
       id: `m-${message.sequence}`,
+      sequence: message.sequence,
       role: "assistant",
       content,
+      ...(message.branchable ? { branchable: true } : {}),
       ...(pendingSteps.length > 0 ? { steps: pendingSteps } : {}),
     });
     pendingSteps = [];
@@ -140,4 +156,66 @@ export function conversationToTurns(
   }
 
   return turns;
+}
+
+/**
+ * The newest turn the person *wrote*: a typed message, not the divider Continue
+ * leaves. This is the turn Retry and Edit act on, and it is the same message the
+ * server's rewind deletes from — the two must agree, or Retry removes one thing
+ * on screen and another in the record.
+ */
+export function lastTypedIndex(turns: readonly Turn[]): number {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const turn = turns[index];
+    if (turn.role === "user" && !turn.continuation) return index;
+  }
+  return -1;
+}
+
+/** What is left after the server's rewind: everything before the newest typed message. */
+export function dropLastExchange(turns: readonly Turn[]): Turn[] {
+  const index = lastTypedIndex(turns);
+  return index < 0 ? [...turns] : turns.slice(0, index);
+}
+
+/**
+ * Where a Branch under `turns[index]` would start, or null when the server would
+ * refuse one there (2.5).
+ *
+ * `fromSequence` is `undefined` for the newest answer of a conversation still on
+ * screen from a live stream — it has no sequence the UI knows, and the server's
+ * default is exactly "the newest answer". For any other turn without a sequence
+ * there is no honest answer, so no button.
+ */
+export interface BranchPoint {
+  fromSequence: number | undefined;
+}
+
+export function branchPointAt(
+  turns: readonly Turn[],
+  index: number,
+  busy: boolean,
+): BranchPoint | null {
+  const turn = turns[index];
+  if (!turn || turn.role !== "assistant" || !turn.content || turn.error) return null;
+  if (turn.sequence !== undefined) {
+    return turn.branchable ? { fromSequence: turn.sequence } : null;
+  }
+  return !busy && index === turns.length - 1 ? { fromSequence: undefined } : null;
+}
+
+/**
+ * The answer a person can branch from instead of retrying `turns[index]` — the
+ * nearest earlier one the server will start at. Offered when a rewind is refused
+ * because the turn changed the part: the refusal says to branch from before it,
+ * and this is what makes that one click.
+ */
+export function branchPointBefore(turns: readonly Turn[], index: number): BranchPoint | null {
+  for (let at = index - 1; at >= 0; at -= 1) {
+    const turn = turns[at];
+    if (turn.role === "assistant" && turn.branchable && turn.sequence !== undefined) {
+      return { fromSequence: turn.sequence };
+    }
+  }
+  return null;
 }

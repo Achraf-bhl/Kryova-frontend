@@ -199,3 +199,42 @@ export function SignOutIcon(props: IconProps) {
     </Svg>
   );
 }
+
+/** A fork: one line becoming two. Branch a conversation. */
+export function BranchIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <circle cx="18" cy="8" r="2" />
+      <path d="M6 7v10M18 10c0 4-6 3-12 7" />
+    </Svg>
+  );
+}
+
+/** A circular arrow. Send the same message again. */
+export function RetryIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v4h4" />
+    </Svg>
+  );
+}
+
+/** A pencil. Change the message before sending it again. */
+export function EditIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4" />
+    </Svg>
+  );
+}
+
+/** A pushpin. Keep a conversation at the top of the list. */
+export function PinIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9 4h6l-1 6 3 3H7l3-3-1-6ZM12 13v7" />
+    </Svg>
+  );
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 
 import { activityLabel, AgentStepList } from "@/components/agent-step-list";
@@ -10,6 +11,12 @@ import { Composer } from "@/components/chat/composer";
 import { CopyButton } from "@/components/chat/copy-button";
 import { ContinuePrompt } from "@/components/chat/continue-prompt";
 import { InterventionPrompt } from "@/components/chat/intervention-prompt";
+import {
+  BranchButton,
+  BranchNotice,
+  RewindActions,
+  RewindRefusal,
+} from "@/components/chat/message-actions";
 import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { AttachmentPanel } from "@/components/attachments/attachment-panel";
@@ -21,12 +28,14 @@ import { useAgentChat } from "@/hooks/use-agent-chat";
 import { useAttachUpload } from "@/hooks/use-attach-upload";
 import { useCatiaStatus } from "@/hooks/use-catia-status";
 import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
+import { api } from "@/lib/api-client";
 import { notifyConversationsChanged } from "@/lib/conversation-events";
 import { resumeNotice } from "@/lib/conversation-resume";
 import { kernelPartState } from "@/lib/kernel-render";
+import { branchPointAt, branchPointBefore, lastTypedIndex } from "@/lib/conversation-transcript";
 import type { Turn } from "@/lib/conversation-transcript";
 import { toPlainText } from "@/lib/markdown";
-import type { ConversationResume } from "@/types/conversation";
+import type { BranchedFrom, ConversationResume } from "@/types/conversation";
 
 /**
  * Openers written the way an engineer would actually start.
@@ -108,6 +117,8 @@ export interface ChatViewProps {
    * chat home, where there is no history to have.
    */
   resume?: ConversationResume | null;
+  /** Where this conversation was branched from, when it was (2.5). */
+  branchedFrom?: BranchedFrom | null;
 }
 
 export function ChatView({
@@ -119,8 +130,13 @@ export function ChatView({
   projectId = null,
   boundDocument = null,
   resume = null,
+  branchedFrom = null,
 }: ChatViewProps) {
+  const router = useRouter();
   const [input, setInput] = useState("");
+  // Why Retry, Edit or Branch did not happen, shown under the message it was for.
+  const [issue, setIssue] = useState<{ reason: string; refused: boolean } | null>(null);
+  const [branching, setBranching] = useState(false);
   const [project, setProject] = useState<string | null>(projectId);
 
   const onConversationStarted = useCallback((id: string) => {
@@ -147,6 +163,7 @@ export function ChatView({
     streamingText,
     send,
     continueTurn,
+    rewindLast,
     retry,
     stop,
     stopping,
@@ -222,8 +239,60 @@ export function ChatView({
     const message = input.trim();
     if (!message || busy) return;
     setInput("");
+    setIssue(null);
     void send(message);
   }, [busy, input, send]);
+
+  /**
+   * Retry and Edit both take the newest message back first (2.5). The server
+   * refuses when that turn changed the part, and says so; nothing is trimmed on
+   * screen unless it deleted the same span.
+   */
+  const retryLast = useCallback(async () => {
+    setIssue(null);
+    const outcome = await rewindLast();
+    if (!outcome.ok) {
+      setIssue(outcome);
+      return;
+    }
+    void send(outcome.message);
+  }, [rewindLast, send]);
+
+  const editLast = useCallback(async () => {
+    setIssue(null);
+    const outcome = await rewindLast();
+    if (!outcome.ok) {
+      setIssue(outcome);
+      return;
+    }
+    setInput(outcome.message);
+  }, [rewindLast]);
+
+  /** `fromSequence` undefined is the newest answer, which is the server's default. */
+  const branchFrom = useCallback(
+    async (fromSequence: number | undefined) => {
+      if (!liveConversationId || branching) return;
+      setBranching(true);
+      setIssue(null);
+      try {
+        const result = await api.branchConversation(liveConversationId, fromSequence);
+        notifyConversationsChanged();
+        router.push(`/dashboard/c/${result.conversation_id}`);
+      } catch (err) {
+        setIssue({
+          reason: err instanceof Error ? err.message : "That conversation could not be branched.",
+          refused: false,
+        });
+      } finally {
+        setBranching(false);
+      }
+    },
+    [branching, liveConversationId, router],
+  );
+
+  // The one message Retry and Edit act on — the newest the person typed — and only
+  // once a conversation exists for the server to rewind.
+  const rewindable = busy || !liveConversationId ? -1 : lastTypedIndex(turns);
 
   const firstName = firstNameOf(fullName, email);
 
@@ -294,6 +363,7 @@ export function ChatView({
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
             {/* At the head of the transcript, because that is where the story
                 starts: this is what happened before anything below it. */}
+            <BranchNotice from={branchedFrom} hasDocument={Boolean(catiaDocument)} />
             <ResumeNotice notice={notice} />
 
             {busy && (
@@ -315,12 +385,32 @@ export function ChatView({
                   {turn.content}
                 </p>
               ) : turn.role === "user" ? (
-                <p
+                <div
                   key={turn.id}
-                  className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary-soft px-3.5 py-2.5 text-[0.9375rem] text-blueprint"
+                  className="group ml-auto flex max-w-[85%] flex-col items-end gap-1"
                 >
-                  {turn.content}
-                </p>
+                  <p className="whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary-soft px-3.5 py-2.5 text-[0.9375rem] text-blueprint">
+                    {turn.content}
+                  </p>
+                  {index === rewindable && (
+                    <RewindActions
+                      disabled={branching}
+                      onRetry={() => void retryLast()}
+                      onEdit={() => void editLast()}
+                    />
+                  )}
+                  {index === lastTypedIndex(turns) && issue && (
+                    <RewindRefusal
+                      reason={issue.reason}
+                      canBranch={issue.refused && branchPointBefore(turns, index) !== null}
+                      onBranch={() => {
+                        const point = branchPointBefore(turns, index);
+                        if (point) void branchFrom(point.fromSequence);
+                      }}
+                      onDismiss={() => setIssue(null)}
+                    />
+                  )}
+                </div>
               ) : (
                 <div key={turn.id} className="group max-w-[95%] space-y-3">
                   {turn.steps && turn.steps.length > 0 && <AgentStepList steps={turn.steps} />}
@@ -330,8 +420,20 @@ export function ChatView({
                       {/* Revealed on hover or keyboard focus. Always in the DOM
                           so it is reachable by tab and by a screen reader —
                           `opacity` hides it from sight, not from the a11y tree. */}
-                      <div className="opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+                      <div className="flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
                         <CopyButton content={turn.content} />
+                        {/* Only where the server would start a branch, and only
+                            while nothing is running: a branch copies a
+                            transcript, and one cut mid-turn would copy half. */}
+                        {!busy && branchPointAt(turns, index, busy) && (
+                          <BranchButton
+                            disabled={branching}
+                            onBranch={() => {
+                              const point = branchPointAt(turns, index, busy);
+                              if (point) void branchFrom(point.fromSequence);
+                            }}
+                          />
+                        )}
                       </div>
                     </>
                   )}

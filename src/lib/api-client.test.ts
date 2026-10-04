@@ -227,3 +227,64 @@ describe("binary surface transport", () => {
     );
   });
 });
+
+describe("conversation search, pin, branch and rewind (ROAD_TO_10 2.5 and 2.6)", () => {
+  const lastCall = () => {
+    const [url, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    return { url: String(url), init: init as RequestInit };
+  };
+
+  it("sends a search as `q`, encoded, and sends none when there is none", async () => {
+    mockFetch.mockResolvedValue(ok({ total: 0, page: 1, page_size: 30, items: [] }));
+
+    await api.listConversations(1, 30, "50% & M6");
+    expect(lastCall().url).toContain("&q=50%25%20%26%20M6");
+
+    await api.listConversations();
+    expect(lastCall().url).not.toContain("q=");
+  });
+
+  it("pins and unpins with a PATCH carrying only `pinned`, and the CSRF header", async () => {
+    mockFetch.mockResolvedValue(ok({}));
+
+    await api.setConversationPinned("c-1", true);
+
+    const { url, init } = lastCall();
+    expect(url).toContain("/ai/conversations/c-1");
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(String(init.body))).toEqual({ pinned: true });
+    expect(new Headers(init.headers).get("x-csrf-token")).toBe("test-csrf");
+  });
+
+  it("branches at a named answer, or at the newest when none is named", async () => {
+    mockFetch.mockResolvedValue(ok({ conversation_id: "b-1" }));
+
+    await api.branchConversation("c-1", 3);
+    expect(lastCall().url).toContain("/ai/conversations/c-1/branch");
+    expect(lastCall().init.method).toBe("POST");
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({ from_sequence: 3 });
+
+    await api.branchConversation("c-1");
+    // Sequence 0 is a real message; "nothing named" must not be confused with it.
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({});
+
+    await api.branchConversation("c-1", 0);
+    expect(JSON.parse(String(lastCall().init.body))).toEqual({ from_sequence: 0 });
+  });
+
+  it("rewinds with a POST and no body, and hands back the server's refusal in words", async () => {
+    mockFetch.mockResolvedValueOnce(ok({ message: "again", removed_messages: 2 }));
+    await expect(api.rewindConversation("c-1")).resolves.toEqual({
+      message: "again",
+      removed_messages: 2,
+    });
+    expect(lastCall().url).toContain("/ai/conversations/c-1/rewind");
+    expect(lastCall().init.method).toBe("POST");
+
+    mockFetch.mockResolvedValueOnce(fail(409, "That turn changed things (catia_pad)."));
+    await expect(api.rewindConversation("c-1")).rejects.toMatchObject({
+      status: 409,
+      message: "That turn changed things (catia_pad).",
+    });
+  });
+});

@@ -30,6 +30,11 @@ vi.mock("@/lib/api-client", async () => {
   };
 });
 
+// ChatView navigates to a branch it has just made (2.5), so it reads the router.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+}));
+
 vi.mock("@/hooks/use-catia-status", () => ({
   useCatiaStatus: () => ({
     state: "offline" as const,

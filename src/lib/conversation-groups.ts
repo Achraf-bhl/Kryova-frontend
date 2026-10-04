@@ -9,14 +9,25 @@ import type { ConversationSummary } from "@/types/conversation";
  * day and unreachable from a component test.
  */
 
-export type ConversationGroupLabel = "Today" | "Yesterday" | "Previous 7 days" | "Older";
+export type ConversationGroupLabel =
+  | "Pinned"
+  | "Today"
+  | "Yesterday"
+  | "Previous 7 days"
+  | "Older";
 
 export interface ConversationGroup {
   label: ConversationGroupLabel;
   items: ConversationSummary[];
 }
 
-const ORDER: readonly ConversationGroupLabel[] = ["Today", "Yesterday", "Previous 7 days", "Older"];
+const ORDER: readonly ConversationGroupLabel[] = [
+  "Pinned",
+  "Today",
+  "Yesterday",
+  "Previous 7 days",
+  "Older",
+];
 
 /** Local-midnight timestamp of `date`, so buckets follow calendar days. */
 function startOfDay(date: Date): number {
@@ -65,7 +76,14 @@ export function groupConversations(
   };
   const sorted = [...conversations].sort((a, b) => time(b.updated_at) - time(a.updated_at));
 
+  // Pinned conversations come first and keep the order they arrived in, which is
+  // the server's: newest pin on top. Re-sorting them by activity here would move a
+  // pin because somebody worked in it, which is what pinning is meant to prevent.
+  const pinned = conversations.filter((conversation) => conversation.pinned);
+  if (pinned.length > 0) buckets.set("Pinned", pinned);
+
   for (const conversation of sorted) {
+    if (conversation.pinned) continue;
     const label = bucketFor(conversation.updated_at, now);
     const existing = buckets.get(label);
     if (existing) existing.push(conversation);

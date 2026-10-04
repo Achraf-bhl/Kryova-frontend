@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentProgress, StepView } from "@/components/agent-step-list";
-import { api } from "@/lib/api-client";
+import { ApiError, api } from "@/lib/api-client";
+import { dropLastExchange } from "@/lib/conversation-transcript";
 import type { Turn } from "@/lib/conversation-transcript";
 import {
   resumeAgent,
@@ -17,6 +18,17 @@ import {
 const UNTITLED_PROJECT_NAME = "New project";
 
 export type { Turn };
+
+/**
+ * What taking back the newest message came to (ROAD_TO_10 2.5).
+ *
+ * `refused` separates "the server said no, and said why" (a turn that changed the
+ * part cannot be rewound) from "it did not get there" (a network error): the first
+ * is a decision with a remedy — branch from before it — and the second is a retry.
+ */
+export type RewindOutcome =
+  | { ok: true; message: string }
+  | { ok: false; reason: string; refused: boolean };
 
 export interface UseAgentChatOptions {
   /**
@@ -541,6 +553,40 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     await run({ continuation: "continue" });
   }, [busy, run]);
 
+  /**
+   * Take back the newest message you wrote and everything after it (2.5).
+   *
+   * The server deletes the same span from the stored transcript and hands the text
+   * back; only then is the thread trimmed here, so the screen never shows a
+   * conversation shorter than the record. Retry sends the text again, Edit puts it
+   * in the composer — both are the caller's, because this hook cannot know which.
+   * Refused while busy: the server refuses a turn in flight too, but there is no
+   * reason to ask.
+   */
+  const rewindLast = useCallback(async (): Promise<RewindOutcome> => {
+    const id = conversationIdRef.current;
+    if (!id || busy) {
+      return {
+        ok: false,
+        reason: busy ? "Wait for the turn to finish, or stop it first." : "There is nothing to take back yet.",
+        refused: false,
+      };
+    }
+    try {
+      const result = await api.rewindConversation(id);
+      setTurns((previous) => dropLastExchange(previous));
+      setError(null);
+      setLastRequest(null);
+      return { ok: true, message: result.message };
+    } catch (err) {
+      return {
+        ok: false,
+        reason: err instanceof Error ? err.message : "That message could not be taken back.",
+        refused: err instanceof ApiError && err.status === 409,
+      };
+    }
+  }, [busy]);
+
   /** Re-run the last message after a failure, without retyping it. */
   const retry = useCallback(async () => {
     if (!lastRequest || busy) return;
@@ -602,6 +648,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     streamingText,
     send,
     continueTurn,
+    rewindLast,
     retry,
     stop,
     /**

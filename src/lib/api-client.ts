@@ -51,7 +51,12 @@ import type {
   VerificationStatus,
 } from "@/types/api";
 import type { CatiaDevice, CatiaDeviceCreated, CatiaStatus } from "@/types/catia";
-import type { ConversationDetail, ConversationPage } from "@/types/conversation";
+import type {
+  BranchResult,
+  ConversationDetail,
+  ConversationPage,
+  RewindResult,
+} from "@/types/conversation";
 
 export type Session = { user: UserRead; csrf_token: string };
 
@@ -772,8 +777,16 @@ export const api = {
   // The chat is the product's front door, so these are read on nearly every
   // screen. The id always comes from the URL; nothing here holds it in memory.
 
-  listConversations: (page = 1, pageSize = 30) =>
-    request<ConversationPage>(`/ai/conversations?page=${page}&page_size=${pageSize}`),
+  /**
+   * `query` searches titles and the user's own words (2.6). The server refuses a
+   * single character, so callers send two or more; this does not trim for them.
+   */
+  listConversations: (page = 1, pageSize = 30, query?: string) =>
+    request<ConversationPage>(
+      `/ai/conversations?page=${page}&page_size=${pageSize}${
+        query ? `&q=${encodeURIComponent(query)}` : ""
+      }`,
+    ),
   readConversation: (conversationId: string) =>
     request<ConversationDetail>(`/ai/conversations/${conversationId}`),
   renameConversation: (conversationId: string, title: string) =>
@@ -784,6 +797,24 @@ export const api = {
     }),
   deleteConversation: (conversationId: string) =>
     mutatingRequest<void>(`/ai/conversations/${conversationId}`, { method: "DELETE" }),
+  setConversationPinned: (conversationId: string, pinned: boolean) =>
+    mutatingRequest<ConversationDetail>(`/ai/conversations/${conversationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned }),
+    }),
+  /** Copy a conversation up to one of its answers (2.5); omit `fromSequence` for the newest. */
+  branchConversation: (conversationId: string, fromSequence?: number) =>
+    mutatingRequest<BranchResult>(`/ai/conversations/${conversationId}/branch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fromSequence === undefined ? {} : { from_sequence: fromSequence }),
+    }),
+  /** Delete the newest message and what followed (2.5). 409 when the turn changed anything. */
+  rewindConversation: (conversationId: string) =>
+    mutatingRequest<RewindResult>(`/ai/conversations/${conversationId}/rewind`, {
+      method: "POST",
+    }),
 
   // -- CATIA bridge ----------------------------------------------------------
   // The browser never reaches the workstation; the backend holds the socket and

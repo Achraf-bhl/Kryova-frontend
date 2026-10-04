@@ -33,6 +33,12 @@ export interface ConversationMessage {
    * that predates the field reads as "typed".
    */
   continuation?: boolean;
+  /**
+   * An assistant answer a branch may start at (ROAD_TO_10 2.5): text with no tool
+   * calls waiting on results. The server decides, so the UI never offers Branch
+   * where the server would refuse it. Optional so an older backend reads as "no".
+   */
+  branchable?: boolean;
   created_at: string;
 }
 
@@ -103,7 +109,21 @@ export interface ConversationDetail {
    * refreshed the page, which is when they are most likely to want it.
    */
   next_action?: NextAction | null;
+  /** Pinned conversations sort first in the sidebar (2.6). */
+  pinned?: boolean;
+  /**
+   * Where this conversation was branched from (2.5), or null — also null once the
+   * source has been deleted, because a branch outlives it.
+   */
+  branched_from?: BranchedFrom | null;
   messages: ConversationMessage[];
+}
+
+export interface BranchedFrom {
+  conversation_id: string;
+  title: string;
+  /** The message of the source the copy ends at. */
+  at_sequence: number;
 }
 
 /** One row of the sidebar. */
@@ -118,6 +138,10 @@ export interface ConversationSummary {
   has_catia_document: boolean;
   prompt_tokens: number;
   completion_tokens: number;
+  pinned?: boolean;
+  branched_from_id?: string | null;
+  /** With a search: whether the title or one of the user's own messages matched. */
+  match?: "title" | "message" | null;
 }
 
 export interface ConversationPage {
@@ -125,4 +149,23 @@ export interface ConversationPage {
   page: number;
   page_size: number;
   items: ConversationSummary[];
+}
+
+/** `POST /ai/conversations/{id}/branch` (2.5). */
+export interface BranchResult {
+  conversation_id: string;
+  title: string;
+  from_sequence: number;
+  copied_messages: number;
+  design_revision: number | null;
+  plan_copied: boolean;
+  summary_kept: boolean;
+  /** What was and was not carried over, in words — always says the CATIA document was not. */
+  notes: string[];
+}
+
+/** `POST /ai/conversations/{id}/rewind` (2.5): the message to send again or edit first. */
+export interface RewindResult {
+  message: string;
+  removed_messages: number;
 }
