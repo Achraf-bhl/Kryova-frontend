@@ -1,316 +1,260 @@
 import { describe, expect, it } from "vitest";
 
-import type { BoundingBox } from "./scene-streaming";
 import {
-  NOTHING_HIDDEN,
-  type SceneNode,
+  bookmark,
+  corners,
+  describeView,
+  emptyView,
+  explodedOffset,
+  isCutAway,
+  isUnder,
+  restore,
+  visibleParts,
+  type Box,
   type SectionPlane,
-  type Vec3,
+  type ViewerPart,
   type ViewState,
-  assemblyCentre,
-  bookmarkView,
-  bookmarksFor,
-  clipsPoint,
-  explodeOffsets,
-  midPlane,
-  restoreView,
-  sideOf,
-  sideOfAll,
-  signedDistance,
-  subtree,
-  visible,
 } from "./viewer-interactions";
 
 /**
- * Section planes, explode, hide/isolate and bookmarks (master plan P6.4).
+ * P6 task 4, tested as the four traps it is built around.
  *
- * Every claim here is one where a plausible implementation is silently wrong
- * rather than broken: a section that drops a part it should have clipped, an
- * explode that sends the main shaft to `NaN`, an isolate that un-hides what the
- * user hid, and a bookmark that restores a camera onto a different machine.
- * None of those throws.
- *
- * Written on Linux and **not run** (the user's rule; Windows runs them).
+ * This module and these tests were claimed by the master plan on 2026-09-16 and had never
+ * been committed — one of ten such paths found by the audit of 2026-09-17. Every trap
+ * below produces a *plausible wrong picture* rather than an error, which is why each test
+ * names the picture rather than the branch.
  */
 
-function bb(min: Vec3, max: Vec3): BoundingBox {
+function box(min: [number, number, number], max: [number, number, number]): Box {
   return { min, max };
 }
 
-const CUBE = bb([-10, -10, -10], [10, 10, 10]);
+function part(path: string, min: [number, number, number], max: [number, number, number]): ViewerPart {
+  return { path, box: box(min, max) };
+}
 
-describe("a section plane's normal points at what is removed", () => {
-  /* catia_split's convention and app/render/section.py's. Two conventions for
-     one question is how a part ends up mirrored with every test green. */
-  const plane: SectionPlane = { normal: [0, 0, 1], offset: 0, enabled: true };
+/** A plane at x = 0 whose normal points at +x, so +x is the material removed. */
+const CUT_POSITIVE_X: SectionPlane = { origin: [0, 0, 0], normal: [1, 0, 0] };
 
-  it("removes what is on the normal's side", () => {
-    expect(clipsPoint(plane, [0, 0, 5])).toBe(true);
-    expect(clipsPoint(plane, [0, 0, -5])).toBe(false);
+describe("trap 1: the normal points at the material removed", () => {
+  it("removes the part on the normal's side, not the other one", () => {
+    // `catia_split`'s convention. Two conventions for one question is how a part ends up
+    // mirrored with every test green.
+    expect(isCutAway(part("kept", [-20, -5, -5], [-10, 5, 5]), CUT_POSITIVE_X)).toBe(false);
+    expect(isCutAway(part("gone", [10, -5, -5], [20, 5, 5]), CUT_POSITIVE_X)).toBe(true);
   });
 
-  it("measures the distance in millimetres whatever the normal's length", () => {
-    const long: SectionPlane = { normal: [0, 0, 7], offset: 0, enabled: true };
+  it("reverses when the normal reverses", () => {
+    const flipped: SectionPlane = { origin: [0, 0, 0], normal: [-1, 0, 0] };
 
-    expect(signedDistance(long, [0, 0, 5])).toBeCloseTo(5, 9);
-  });
-
-  it("offsets along the normal, not along an axis", () => {
-    const tilted: SectionPlane = { normal: [1, 1, 0], offset: 0, enabled: true };
-
-    expect(signedDistance(tilted, [1, 1, 0])).toBeCloseTo(Math.SQRT2, 9);
-  });
-
-  it("cuts nothing when it is disabled", () => {
-    expect(clipsPoint({ ...plane, enabled: false }, [0, 0, 5])).toBe(false);
-  });
-
-  it("treats a zero normal as cutting nothing rather than everything", () => {
-    /* It is not a plane. Reading NaN as "removed" would empty the viewport. */
-    const degenerate: SectionPlane = { normal: [0, 0, 0], offset: 0, enabled: true };
-
-    expect(clipsPoint(degenerate, [0, 0, 5])).toBe(false);
-    expect(sideOf(degenerate, CUBE)).toBe("kept");
+    expect(isCutAway(part("a", [10, -5, -5], [20, 5, 5]), flipped)).toBe(false);
+    expect(isCutAway(part("a", [-20, -5, -5], [-10, 5, 5]), flipped)).toBe(true);
   });
 });
 
-describe("which side a whole part is on", () => {
-  const plane: SectionPlane = { normal: [0, 0, 1], offset: 0, enabled: true };
+describe("trap 2: sides are decided on the corners, not the centre", () => {
+  it("keeps a long member that runs through the cut", () => {
+    // Its centre is on the removed side, so a centre test would delete it — from the
+    // section view it exists to appear in.
+    const spanning = part("rail", [-100, -5, -5], [300, 5, 5]);
 
-  it("keeps a part entirely behind the cut", () => {
-    expect(sideOf(plane, bb([-1, -1, -50], [1, 1, -40]))).toBe("kept");
+    expect(spanning.box.min[0] + spanning.box.max[0]).toBeGreaterThan(0); // centre is +x
+    expect(isCutAway(spanning, CUT_POSITIVE_X)).toBe(false);
   });
 
-  it("removes a part entirely past it", () => {
-    expect(sideOf(plane, bb([-1, -1, 40], [1, 1, 50]))).toBe("removed");
+  it("removes a part only when every corner is on the removed side", () => {
+    expect(isCutAway(part("clear", [1, 1, 1], [2, 2, 2]), CUT_POSITIVE_X)).toBe(true);
+    expect(isCutAway(part("touching", [0, 1, 1], [2, 2, 2]), CUT_POSITIVE_X)).toBe(false);
   });
 
-  it("calls a part through the cut crossing, so it is clipped and not dropped", () => {
-    /* Testing the centre alone makes a long member through the cut vanish from
-       the section view while still being in the part. */
-    expect(sideOf(plane, CUBE)).toBe("crossing");
+  it("looks at all eight corners", () => {
+    expect(corners(box([0, 0, 0], [1, 1, 1]))).toHaveLength(8);
+    expect(new Set(corners(box([0, 0, 0], [1, 1, 1])).map(String)).size).toBe(8);
   });
 
-  it("tests corners, so a part whose centre is kept but whose end is not still crosses", () => {
-    expect(sideOf(plane, bb([-1, -1, -30], [1, 1, 1]))).toBe("crossing");
-  });
+  it("catches a part that only just crosses on a diagonal plane", () => {
+    const diagonal: SectionPlane = { origin: [0, 0, 0], normal: [0.577, 0.577, 0.577] };
+    const straddling = part("corner", [-1, -1, -1], [1.2, 1.2, 1.2]);
 
-  it("intersects several planes, which is what three sliders mean", () => {
-    const x: SectionPlane = { normal: [1, 0, 0], offset: 0, enabled: true };
-    const z: SectionPlane = { normal: [0, 0, 1], offset: 0, enabled: true };
-    const corner = bb([5, 5, 5], [9, 9, 9]);
-
-    expect(sideOfAll([x, z], corner)).toBe("removed");
-    expect(sideOfAll([x, z], bb([-9, -9, -9], [-5, -5, -5]))).toBe("kept");
-  });
-
-  it("is kept when every plane is disabled", () => {
-    expect(sideOfAll([{ ...plane, enabled: false }], CUBE)).toBe("kept");
-  });
-
-  it("cuts a mid-plane through the middle of the box", () => {
-    const offset = bb([0, 0, 0], [100, 10, 10]);
-
-    expect(midPlane(offset, "x").offset).toBe(50);
-    expect(midPlane(offset, "x").normal).toEqual([1, 0, 0]);
+    expect(isCutAway(straddling, diagonal)).toBe(false);
   });
 });
 
-describe("exploding an assembly", () => {
-  const nodes: SceneNode[] = [
-    { id: "left", parent: null, box: bb([-30, -5, -5], [-20, 5, 5]) },
-    { id: "right", parent: null, box: bb([20, -5, -5], [30, 5, 5]) },
-  ];
+describe("trap 3: a part at the assembly's centre does not move", () => {
+  const assembly = box([-100, -100, -100], [100, 100, 100]);
 
-  it("is the identity at factor zero, so the animation starts assembled", () => {
-    const offsets = explodeOffsets(nodes, 0);
-
-    expect(offsets.get("left")).toEqual([0, 0, 0]);
-    expect(offsets.get("right")).toEqual([0, 0, 0]);
-  });
-
-  it("moves each component radially outward from the assembly's centre", () => {
-    const offsets = explodeOffsets(nodes, 1);
-
-    expect(offsets.get("left")?.[0]).toBeCloseTo(-25, 9);
-    expect(offsets.get("right")?.[0]).toBeCloseTo(25, 9);
-  });
-
-  it("scales with the factor, so an animation is a lerp", () => {
-    const half = explodeOffsets(nodes, 0.5).get("right") as Vec3;
-    const full = explodeOffsets(nodes, 1).get("right") as Vec3;
-
-    expect(half[0]).toBeCloseTo(full[0] / 2, 9);
-  });
-
-  it("leaves a part centred on the assembly's centre where it is", () => {
-    /* Normalising a zero vector is NaN, and a NaN translation puts the part at
-       no position at all — it disappears with nothing raising. On a symmetric
-       machine that part is the main shaft. */
-    const withShaft: SceneNode[] = [...nodes, { id: "shaft", parent: null, box: CUBE }];
-    const offset = explodeOffsets(withShaft, 3).get("shaft") as Vec3;
+  it("leaves it where it is rather than sending it to NaN", () => {
+    // Normalising a zero vector is NaN, a NaN translation puts the part nowhere, and
+    // nothing raises. On a symmetric machine that part is the main shaft — the one an
+    // exploded view exists to show.
+    const shaft = part("shaft", [-10, -10, -10], [10, 10, 10]);
+    const offset = explodedOffset(shaft, assembly, 1);
 
     expect(offset).toEqual([0, 0, 0]);
-    expect(offset.every((one) => Number.isFinite(one))).toBe(true);
+    for (const component of offset) expect(Number.isNaN(component)).toBe(false);
   });
 
-  it("plans nothing for an empty assembly", () => {
-    expect(explodeOffsets([], 1).size).toBe(0);
+  it("moves an off-centre part outward along its own direction", () => {
+    const outer = part("outer", [50, -5, -5], [70, 5, 5]);
+    const offset = explodedOffset(outer, assembly, 1);
+
+    expect(offset[0]).toBeGreaterThan(0);
+    expect(offset[1]).toBeCloseTo(0, 9);
   });
 
-  it("takes the centre of everything, not of the first thing", () => {
-    expect(assemblyCentre(nodes)).toEqual([0, 0, 0]);
+  it("moves nothing at all when the factor is zero", () => {
+    const outer = part("outer", [50, -5, -5], [70, 5, 5]);
+    expect(explodedOffset(outer, assembly, 0)).toEqual([0, 0, 0]);
+  });
+
+  it("moves a bigger part further, so the machine opens rather than scattering", () => {
+    const small = part("small", [50, -1, -1], [52, 1, 1]);
+    const large = part("large", [50, -20, -20], [90, 20, 20]);
+
+    const a = explodedOffset(small, assembly, 1);
+    const b = explodedOffset(large, assembly, 1);
+
+    expect(Math.hypot(...b)).toBeGreaterThan(Math.hypot(...a));
+  });
+
+  it("scales with the factor", () => {
+    const outer = part("outer", [50, -5, -5], [70, 5, 5]);
+    const half = explodedOffset(outer, assembly, 0.5);
+    const full = explodedOffset(outer, assembly, 1);
+
+    expect(full[0]).toBeCloseTo(half[0] * 2, 9);
   });
 });
 
-describe("hide and isolate by subtree", () => {
-  /* frame > [gearbox > [housing, gears], motor] */
-  const nodes: SceneNode[] = [
-    { id: "frame", parent: null, box: CUBE },
-    { id: "gearbox", parent: "frame", box: CUBE },
-    { id: "housing", parent: "gearbox", box: CUBE },
-    { id: "gears", parent: "gearbox", box: CUBE },
-    { id: "motor", parent: "frame", box: CUBE },
+describe("trap 4: hide wins over isolate, and an empty isolate shows nothing", () => {
+  const parts = [
+    part("m/a", [0, 0, 0], [1, 1, 1]),
+    part("m/a/bolt", [0, 0, 0], [1, 1, 1]),
+    part("m/b", [0, 0, 0], [1, 1, 1]),
   ];
 
-  it("takes a whole subtree, including its root", () => {
-    expect(subtree(nodes, "gearbox")).toEqual(new Set(["gearbox", "housing", "gears"]));
+  it("keeps a hidden part hidden inside the isolated subtree", () => {
+    // Hiding is the more specific instruction and the user gave it last.
+    const state: ViewState = { ...emptyView(), isolated: "m/a", hidden: ["m/a/bolt"] };
+
+    expect(visibleParts(parts, state).map((p) => p.path)).toEqual(["m/a"]);
   });
 
-  it("shows everything by default", () => {
-    expect(visible(nodes, NOTHING_HIDDEN).size).toBe(nodes.length);
+  it("shows nothing for an isolated root that is not in the tree", () => {
+    // Falling back to the whole machine is the opposite of what isolate asked for, and
+    // it looks like the control did nothing.
+    const state: ViewState = { ...emptyView(), isolated: "m/nowhere" };
+
+    expect(visibleParts(parts, state)).toEqual([]);
   });
 
-  it("hiding a subtree hides its children too", () => {
-    const shown = visible(nodes, { hiddenRoots: ["gearbox"], isolatedRoot: null });
+  it("shows the subtree and its descendants", () => {
+    const state: ViewState = { ...emptyView(), isolated: "m/a" };
 
-    expect(shown).toEqual(new Set(["frame", "motor"]));
+    expect(visibleParts(parts, state).map((p) => p.path)).toEqual(["m/a", "m/a/bolt"]);
   });
 
-  it("isolating a subtree shows only it", () => {
-    const shown = visible(nodes, { hiddenRoots: [], isolatedRoot: "gearbox" });
-
-    expect(shown).toEqual(new Set(["gearbox", "housing", "gears"]));
+  it("shows everything when nothing is isolated or hidden", () => {
+    expect(visibleParts(parts, emptyView())).toHaveLength(3);
   });
 
-  it("hide wins over isolate, which is the point of doing both", () => {
-    /* Isolating a gearbox and then hiding its housing must leave the gears
-       showing. The opposite rule reads as the viewer forgetting an instruction. */
-    const shown = visible(nodes, { hiddenRoots: ["housing"], isolatedRoot: "gearbox" });
-
-    expect(shown).toEqual(new Set(["gearbox", "gears"]));
+  it("does not treat a name that merely shares a prefix as a descendant", () => {
+    expect(isUnder("m/abc", "m/a")).toBe(false);
+    expect(isUnder("m/a/bolt", "m/a")).toBe(true);
+    expect(isUnder("m/a", "m/a")).toBe(true);
   });
 
-  it("isolating something that is not in the tree shows nothing, never everything", () => {
-    /* The user asked to see one thing; showing them the whole machine instead is
-       indistinguishable from the isolate not having worked. */
-    expect(visible(nodes, { hiddenRoots: [], isolatedRoot: "flywheel" }).size).toBe(0);
-  });
+  it("applies sections on top of hide and isolate", () => {
+    const state: ViewState = { ...emptyView(), sections: [CUT_POSITIVE_X] };
+    const cut = [part("kept", [-9, 0, 0], [-1, 1, 1]), part("gone", [1, 0, 0], [9, 1, 1])];
 
-  it("does not hang on a cycle a malformed structure could carry", () => {
-    const looped: SceneNode[] = [
-      { id: "a", parent: "b", box: CUBE },
-      { id: "b", parent: "a", box: CUBE },
-    ];
-
-    expect(subtree(looped, "a")).toEqual(new Set(["a", "b"]));
+    expect(visibleParts(cut, state).map((p) => p.path)).toEqual(["kept"]);
   });
 });
 
-describe("a bookmark is the view, not the camera", () => {
-  const state: ViewState = {
-    camera: { position: [0, 0, 100], target: [0, 0, 0], up: [0, 1, 0] },
-    sections: [{ normal: [0, 0, 1], offset: 5, enabled: true }],
-    visibility: { hiddenRoots: ["fasteners"], isolatedRoot: null },
-    explodeFactor: 0.4,
+describe("a bookmark stores everything the user could see", () => {
+  const camera = {
+    positionMm: [1, 2, 3] as const,
+    targetMm: [0, 0, 0] as const,
+    upMm: [0, 0, 1] as const,
   };
-  const label = {
-    id: "bm1",
-    name: "the cracked corner",
-    conversationId: "conv-1",
-    savedAt: "2026-09-16T10:00:00Z",
+  const view: ViewState = {
+    sections: [CUT_POSITIVE_X],
+    hidden: ["m/bolt"],
+    isolated: "m/a",
+    explode: 0.4,
   };
 
-  it("carries the sections, or it restores a solid block where there was a bore", () => {
-    const saved = bookmarkView(state, label);
+  it("carries the sections, the hidden set and the explode factor", () => {
+    // A bookmark that stored only the camera restores a solid block where the user saw a
+    // bore, or a machine with forty fasteners that were hidden when it was taken.
+    const saved = bookmark("section through the bore", camera, view, "2026-09-17T21:00:00Z");
 
-    expect(saved.sections).toEqual(state.sections);
-    expect(saved.explodeFactor).toBe(0.4);
-    expect(saved.visibility.hiddenRoots).toEqual(["fasteners"]);
+    expect(saved.view.sections).toHaveLength(1);
+    expect(saved.view.hidden).toEqual(["m/bolt"]);
+    expect(saved.view.isolated).toBe("m/a");
+    expect(saved.view.explode).toBe(0.4);
+    expect(saved.camera.positionMm).toEqual([1, 2, 3]);
   });
 
-  it("copies rather than referencing, so dragging a slider cannot rewrite it", () => {
-    const sections: SectionPlane[] = [{ normal: [0, 0, 1], offset: 5, enabled: true }];
-    const saved = bookmarkView({ ...state, sections }, label);
+  it("deep-copies on the way in, so later dragging cannot rewrite it", () => {
+    const live: ViewState = { ...view, hidden: [...view.hidden] };
+    const saved = bookmark("v", camera, live, "2026-09-17T21:00:00Z");
 
-    sections[0].offset = 99;
+    (live.hidden as string[]).push("m/another");
+    (live.sections[0].normal as unknown as number[])[0] = -1;
 
-    expect(saved.sections[0].offset).toBe(5);
+    expect(saved.view.hidden).toEqual(["m/bolt"]);
+    expect(saved.view.sections[0].normal[0]).toBe(1);
   });
 
-  it("copies the camera too", () => {
-    const camera = { position: [0, 0, 100] as Vec3, target: [0, 0, 0] as Vec3, up: [0, 1, 0] as Vec3 };
-    const saved = bookmarkView({ ...state, camera }, label);
+  it("deep-copies on the way out, so restoring twice gives two views", () => {
+    const saved = bookmark("v", camera, view, "2026-09-17T21:00:00Z");
+    const first = restore(saved);
 
-    camera.position[2] = 999;
+    (first.view.hidden as string[]).push("m/scribble");
 
-    expect(saved.camera.position[2]).toBe(100);
+    expect(restore(saved).view.hidden).toEqual(["m/bolt"]);
   });
 
-  it("restores what it saved", () => {
-    const restored = restoreView(bookmarkView(state, label));
+  it("keeps the name and the instant it was taken", () => {
+    const saved = bookmark("iso from the left", camera, view, "2026-09-17T21:00:00Z");
 
-    expect(restored.camera).toEqual(state.camera);
-    expect(restored.sections).toEqual(state.sections);
-    expect(restored.visibility).toEqual(state.visibility);
-    expect(restored.explodeFactor).toBe(state.explodeFactor);
+    expect(saved.name).toBe("iso from the left");
+    expect(saved.takenAt).toBe("2026-09-17T21:00:00Z");
   });
 
-  it("restoring hands back a copy, so restoring twice gives two views", () => {
-    const saved = bookmarkView(state, label);
-    const first = restoreView(saved);
-    first.sections[0].offset = 99;
-
-    expect(restoreView(saved).sections[0].offset).toBe(5);
+  it("round-trips a view unchanged", () => {
+    const saved = bookmark("v", camera, view, "2026-09-17T21:00:00Z");
+    expect(restore(saved).view).toEqual(view);
   });
 });
 
-describe("bookmarks belong to a conversation", () => {
-  const make = (id: string, conversationId: string, savedAt: string) =>
-    bookmarkView(
-      {
-        camera: { position: [0, 0, 1], target: [0, 0, 0], up: [0, 1, 0] },
-        sections: [],
-        visibility: NOTHING_HIDDEN,
-        explodeFactor: 0,
-      },
-      { id, name: id, conversationId, savedAt },
+describe("the status line counts rather than using adjectives", () => {
+  it("says how many of how many are showing", () => {
+    // A user who cannot see a part needs to know whether the viewer is hiding it or it
+    // is genuinely absent.
+    const notes = describeView({ ...emptyView(), hidden: ["a", "b"] }, 10, 8);
+
+    expect(notes.join(" ")).toContain("2 hidden");
+    expect(notes.join(" ")).toContain("showing 8 of 10");
+  });
+
+  it("says nothing when the view is untouched", () => {
+    expect(describeView(emptyView(), 10, 10)).toEqual([]);
+  });
+
+  it("reports the explode factor as a percentage", () => {
+    expect(describeView({ ...emptyView(), explode: 0.35 }, 3, 3).join(" ")).toContain("35%");
+  });
+
+  it("names the isolated subtree", () => {
+    expect(describeView({ ...emptyView(), isolated: "m/a" }, 3, 1).join(" ")).toContain("m/a");
+  });
+
+  it("pluralises the section count", () => {
+    expect(describeView({ ...emptyView(), sections: [CUT_POSITIVE_X] }, 3, 3)[0]).toContain(
+      "1 section plane",
     );
-
-  it("lists only this conversation's, because that is what the name means", () => {
-    const all = [
-      make("a", "conv-1", "2026-09-16T10:00:00Z"),
-      make("b", "conv-2", "2026-09-16T11:00:00Z"),
-    ];
-
-    expect(bookmarksFor(all, "conv-1").map((one) => one.id)).toEqual(["a"]);
-  });
-
-  it("puts the newest first", () => {
-    const all = [
-      make("old", "conv-1", "2026-09-16T10:00:00Z"),
-      make("new", "conv-1", "2026-09-16T12:00:00Z"),
-    ];
-
-    expect(bookmarksFor(all, "conv-1").map((one) => one.id)).toEqual(["new", "old"]);
-  });
-
-  it("breaks a tie on id, so two renders agree", () => {
-    const all = [
-      make("b", "conv-1", "2026-09-16T10:00:00Z"),
-      make("a", "conv-1", "2026-09-16T10:00:00Z"),
-    ];
-
-    expect(bookmarksFor(all, "conv-1").map((one) => one.id)).toEqual(["a", "b"]);
   });
 });

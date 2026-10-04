@@ -1,277 +1,225 @@
 /**
- * What still works with no backend, said out loud rather than discovered by timeout (P7.4).
+ * What works without the backend, stated rather than discovered by timeout — P7 task 4.
  *
- * The desktop app launches, paints a full interface and then — if the backend is not
- * reachable — every button fails one at a time, each after its own timeout, each with its
- * own shrug. The user learns what is broken by trying things for two minutes. That is the
- * behaviour this module exists to replace.
+ * **"Does this work offline" is a fact somebody knows when they build the feature and
+ * nobody can infer afterwards.** So it is a table written in advance, not a guess made at
+ * the call site — one table, not one decision per screen, because per-screen decisions are
+ * how two screens come to disagree about the same feature and the user meets both.
  *
- * **The honest version is a table written in advance**, because "does this work offline"
- * is a fact about each feature that somebody knows when they build it and nobody can infer
- * afterwards. `CAPABILITIES` below is that table. A feature not in it is
- * `unknownCapability`, which reads as *unavailable*, never as available — a missing entry
- * must not silently grant an offline promise the code cannot keep.
+ * **A capability the table does not list reads as unavailable.** Defaulting a missing row
+ * to "works offline" would turn forgetting to add one into a promise the app cannot keep,
+ * which is the exact failure this module exists to remove.
  *
- * Three things this deliberately does **not** do:
+ * Three states that are usually collapsed into one, and are kept apart here:
  *
- * * **It does not queue writes for later.** An offline queue is a real feature with real
- *   consequences (a design edit replayed against a part that moved underneath), and
- *   pretending to accept a write is worse than refusing it. Nothing here defers anything.
- * * **It does not use `navigator.onLine` as the answer.** That flag says the machine has
- *   *a* network, not that Kryova's backend is reachable — a laptop on a café wifi with a
- *   captive portal is `true` and can reach nothing. It is used only as a fast negative:
- *   `false` is conclusive, `true` proves nothing and still needs a probe.
- * * **It does not guess from one failed request.** A single 500 is the server having a bad
- *   moment; `Reachability` distinguishes *unreachable* from *failing*, because the sentence
- *   a user needs is different for each.
+ * - **`unknown` is the startup state and is not offline.** Before the first probe the
+ *   honest position is that the backend is probably fine; greying the interface out on
+ *   launch would make every cold start look like an outage.
+ * - **`unreachable` and `failing` get different sentences.** "No connection" invites
+ *   checking the network; "the server is having trouble" invites waiting. Swapping them
+ *   wastes the user's time in both directions.
+ * - **`cached` is enabled *and marked degraded*,** so a short list cannot read as the
+ *   whole list. "Your last three designs" is honest; an empty list captioned "designs" is
+ *   not.
  *
- * Pure. No fetch, no React, no timers: the caller probes and hands the result in.
+ * Two readings that look obvious and are wrong:
  *
- * No runtime dependency added — the doctrine is three.
+ * - **`navigator.onLine` is a fast negative only.** It is `true` on a captive-portal wifi
+ *   that reaches nothing, so it can say "definitely offline" and never "definitely fine".
+ * - **A 401 or a 404 is not offline.** The server is up and answering correctly about
+ *   something else, and switching the whole interface off because one probe was
+ *   unauthorised is the obvious wrong reading. Only a 5xx is `failing`.
+ *
+ * **Nothing is queued for later, and the refusals say so.** An offline queue is a real
+ * feature with real consequences — a design edit replayed against a part that moved
+ * underneath — and pretending to accept a write is worse than refusing it.
+ *
+ * Rebuilt 2026-09-17. The master plan claimed this module on 2026-09-16 and it had never
+ * been committed; the design above is what that status recorded, and it is the reason the
+ * status was worth keeping even though its claim was false.
  */
 
-/**
- * What the app has most recently established about the backend.
- *
- * `unknown` is the startup state and is not a synonym for offline: the app has not asked
- * yet, and telling a user "you are offline" before trying is its own wrong answer.
- */
-export type Reachability =
-  | { readonly state: "unknown" }
-  | { readonly state: "online" }
-  /** Nothing answered: DNS, connection refused, timeout, or `navigator.onLine === false`. */
-  | { readonly state: "unreachable"; readonly since: number }
-  /** Something answered, badly. The backend exists and is unwell — a different sentence. */
-  | { readonly state: "failing"; readonly status: number; readonly since: number };
+/** How the backend looked at the last probe. */
+export type BackendState = "unknown" | "online" | "unreachable" | "failing";
 
-export const UNKNOWN_REACHABILITY: Reachability = { state: "unknown" };
+/** What a capability can do in the current state. */
+export type Availability = "available" | "degraded" | "unavailable";
 
-/** Whether the backend is known to be usable right now. `unknown` is not. */
-export function isUsable(reachability: Reachability): boolean {
-  return reachability.state === "online";
-}
-
-/**
- * How a capability behaves when the backend is gone.
- *
- * `cached` is the interesting one and the one that must not be overclaimed: it means the
- * feature works **only** for data already on this machine, and the UI has to say which.
- * "Your last three designs" is honest; an empty list captioned "designs" is not.
- */
-export type OfflineBehaviour = "works" | "cached" | "unavailable";
+/** What a capability needs in order to work. */
+export type Requirement =
+  /** Works with no backend at all. */
+  | "none"
+  /** Works from what the client already holds, and is incomplete without the server. */
+  | "cache"
+  /** Needs the server. */
+  | "server";
 
 export interface Capability {
   readonly id: string;
   /** What a user would call it. */
   readonly label: string;
-  readonly offline: OfflineBehaviour;
-  /**
-   * The sentence shown when the backend is unreachable. Says what the user can do, not
-   * what the software cannot — `errors are human-readable and actionable` is a project
-   * rule and it applies hardest here, where the user is already stuck.
-   */
-  readonly whenOffline: string;
+  readonly requires: Requirement;
+  /** Why it needs what it needs, in one clause. Shown when a control is disabled. */
+  readonly because: string;
 }
 
 /**
- * Every capability the desktop shell exposes, and what each does with no backend.
+ * Every capability the app offers, and what each needs. Ten rows.
  *
- * Kept as one table on purpose. The alternative — each screen deciding for itself — is how
- * two screens come to disagree about whether the same feature works, and the user meets
- * both.
+ * Written in advance and in one place. A feature added without a row here is
+ * `unavailable` whenever the backend is not known-good, which is the safe direction: a
+ * control the user cannot press is a nuisance, and one that silently fails is a bug
+ * report about something else.
  */
 export const CAPABILITIES: readonly Capability[] = [
   {
-    id: "read-handbook",
-    label: "Documentation and guides",
-    offline: "works",
-    whenOffline: "The handbook is bundled with the app and reads normally.",
-  },
-  {
     id: "view-cached-design",
-    label: "Designs you have already opened",
-    offline: "cached",
-    whenOffline:
-      "You can read designs already downloaded to this machine. Anything you have not opened before is not here.",
+    label: "View a design you already opened",
+    requires: "cache",
+    because: "the design is in this browser; anything newer is on the server",
   },
   {
-    id: "view-cached-geometry",
-    label: "3D views you have already loaded",
-    offline: "cached",
-    whenOffline:
-      "Meshes already downloaded still draw. Changing the detail level fetches, so it will not work.",
+    id: "read-docs",
+    label: "Read the handbook",
+    requires: "none",
+    because: "the handbook ships with the app",
+  },
+  {
+    id: "view-cached-results",
+    label: "View results you already opened",
+    requires: "cache",
+    because: "the fields are in this browser; the run history is on the server",
   },
   {
     id: "chat",
-    label: "Asking the agent",
-    offline: "unavailable",
-    whenOffline:
-      "The agent runs on the server. Reconnect to carry on the conversation — nothing you have already said is lost.",
+    label: "Ask the agent",
+    requires: "server",
+    because: "the model runs on the server",
   },
   {
     id: "run-simulation",
-    label: "Running a simulation",
-    offline: "unavailable",
-    whenOffline:
-      "Solving happens on the server. Queue it once you are reconnected; nothing is held for later.",
+    label: "Run a simulation",
+    requires: "server",
+    because: "meshing and solving happen on the server",
   },
   {
-    id: "edit-design",
-    label: "Changing a design parameter",
-    offline: "unavailable",
-    whenOffline:
-      "A change is compiled and checked on the server, so it cannot be made here. It is not saved for later either — make it again when you reconnect.",
+    id: "upload-geometry",
+    label: "Upload geometry",
+    requires: "server",
+    because: "the file is stored on the server",
   },
   {
-    id: "upload-attachment",
-    label: "Attaching a file",
-    offline: "unavailable",
-    whenOffline: "Uploads go to the server. The file is untouched; attach it again later.",
+    id: "edit-parameter",
+    label: "Change a design parameter",
+    requires: "server",
+    because: "the change is compiled and recorded on the server",
+  },
+  {
+    id: "browse-projects",
+    label: "Browse your projects",
+    requires: "server",
+    because: "the project list is on the server",
   },
   {
     id: "catia-bridge",
-    label: "Driving the CATIA seat",
-    offline: "unavailable",
-    whenOffline:
-      "The bridge is paired through the server, so the seat cannot be driven while it is unreachable — even though CATIA is on this machine.",
+    label: "Drive CATIA",
+    requires: "server",
+    because: "the bridge is dialled from the server",
   },
   {
     id: "export",
-    label: "Exporting STEP, DXF or a drawing",
-    offline: "unavailable",
-    whenOffline: "Exports are written by the server from the authoritative geometry.",
-  },
-  {
-    id: "sign-in",
-    label: "Signing in or out",
-    offline: "unavailable",
-    whenOffline:
-      "Signing in needs the server. You stay signed in here until your session expires.",
+    label: "Export STEP or a drawing",
+    requires: "server",
+    because: "the export is produced on the server",
   },
 ] as const;
 
-const BY_ID = new Map(CAPABILITIES.map((one) => [one.id, one]));
+const BY_ID = new Map(CAPABILITIES.map((capability) => [capability.id, capability]));
+
+/** Whether the backend is known to be unusable. `unknown` is not. */
+export function isDown(state: BackendState): boolean {
+  return state === "unreachable" || state === "failing";
+}
 
 /**
- * The entry for a capability the table does not list.
+ * What `id` can do right now.
  *
- * **Unavailable, not available.** A feature nobody classified is a feature nobody checked,
- * and defaulting it to "works offline" would make forgetting to add a row into a promise
- * the app cannot keep — the exact failure this module was written to remove.
+ * An unknown id is `unavailable`, deliberately: see the module docstring. It is not an
+ * exception, because a missing row must not be able to take a screen down.
  */
-export function unknownCapability(id: string): Capability {
+export function availability(id: string, state: BackendState): Availability {
+  const capability = BY_ID.get(id);
+  if (capability === undefined) return "unavailable";
+  if (capability.requires === "none") return "available";
+  if (!isDown(state)) return "available";
+  return capability.requires === "cache" ? "degraded" : "unavailable";
+}
+
+/** The sentence to show when a capability is not fully available, or `null` when it is. */
+export function explain(id: string, state: BackendState): string | null {
+  const capability = BY_ID.get(id);
+  if (capability === undefined) {
+    return "This is not something the app knows how to do offline, so it is switched off.";
+  }
+  const verdict = availability(id, state);
+  if (verdict === "available") return null;
+  const cause =
+    state === "unreachable"
+      ? "Nothing answered, so the connection is the first thing to check."
+      : "The server is having trouble. Waiting is usually the right move.";
+  if (verdict === "degraded") {
+    return `Showing what this browser already has — ${capability.because}. ${cause}`;
+  }
+  return `Not available: ${capability.because}. ${cause} Nothing is queued to run later.`;
+}
+
+/**
+ * Read a probe into a state.
+ *
+ * `status` is the HTTP status the probe came back with, or `null` if nothing answered.
+ * Only a 5xx is `failing`: a 401 or a 404 means the server is up and answering correctly
+ * about something else.
+ */
+export function stateFromProbe(status: number | null, onLine = true): BackendState {
+  if (!onLine) return "unreachable";
+  if (status === null) return "unreachable";
+  if (status >= 500) return "failing";
+  return "online";
+}
+
+export interface OfflineSummary {
+  readonly state: BackendState;
+  readonly unavailable: number;
+  readonly degraded: number;
+  readonly total: number;
+  /** The one line a banner shows, or `null` when there is nothing to say. */
+  readonly banner: string | null;
+}
+
+/**
+ * What the banner says. **Counts, never adjectives.**
+ *
+ * "7 of 10 features need the server" is checkable by the person reading it; "limited
+ * functionality" is not, and leaves them to find out which parts by pressing things.
+ */
+export function summarise(state: BackendState): OfflineSummary {
+  const verdicts = CAPABILITIES.map((capability) => availability(capability.id, state));
+  const unavailable = verdicts.filter((verdict) => verdict === "unavailable").length;
+  const degraded = verdicts.filter((verdict) => verdict === "degraded").length;
+  const total = CAPABILITIES.length;
+  if (!isDown(state) || unavailable + degraded === 0) {
+    return { state, unavailable, degraded, total, banner: null };
+  }
+  const head =
+    state === "unreachable"
+      ? "No connection to Kryova."
+      : "Kryova's server is having trouble.";
+  const degradedClause = degraded > 0 ? `, and ${degraded} show only what is cached` : "";
   return {
-    id,
-    label: id,
-    offline: "unavailable",
-    whenOffline:
-      "This part of Kryova has not been checked for offline use, so it is treated as needing the server.",
+    state,
+    unavailable,
+    degraded,
+    total,
+    banner: `${head} ${unavailable} of ${total} features need the server${degradedClause}. Nothing is queued to run later.`,
   };
-}
-
-export function capability(id: string): Capability {
-  return BY_ID.get(id) ?? unknownCapability(id);
-}
-
-/** What the UI should do with one capability given what is known about the backend. */
-export interface CapabilityVerdict {
-  readonly capability: Capability;
-  /** Whether to let the user start it at all. */
-  readonly enabled: boolean;
-  /** Why not, when not. Empty when enabled. */
-  readonly reason: string;
-  /**
-   * True when it is allowed but will show less than usual — a cached view. The UI owes the
-   * user a marker here; without one, a short list reads as the whole list.
-   */
-  readonly degraded: boolean;
-}
-
-/**
- * Whether a capability can be used, and what to say when it cannot.
- *
- * **`unknown` reachability enables everything.** Before the first probe the honest
- * position is that the backend is probably fine, and greying the interface out on startup
- * would make every cold launch look like an outage. A request made under `unknown` that
- * fails is what moves the state — which is the normal, correct order.
- */
-export function verdictFor(id: string, reachability: Reachability): CapabilityVerdict {
-  const found = capability(id);
-
-  if (reachability.state === "online" || reachability.state === "unknown") {
-    return { capability: found, enabled: true, reason: "", degraded: false };
-  }
-
-  // `failing` and `unreachable` differ in what the user should do, so they differ in what
-  // they are told. "The server is having trouble" invites waiting; "no connection" invites
-  // checking the network. Swapping them wastes the user's time in both directions.
-  const context =
-    reachability.state === "failing"
-      ? `Kryova's server answered with an error (${reachability.status}).`
-      : "Kryova's server cannot be reached from this machine.";
-
-  if (found.offline === "works") {
-    return { capability: found, enabled: true, reason: "", degraded: false };
-  }
-  if (found.offline === "cached") {
-    return {
-      capability: found,
-      enabled: true,
-      reason: `${context} ${found.whenOffline}`,
-      degraded: true,
-    };
-  }
-  return {
-    capability: found,
-    enabled: false,
-    reason: `${context} ${found.whenOffline}`,
-    degraded: false,
-  };
-}
-
-/** Every capability's verdict, for a status panel that lists the whole picture at once. */
-export function allVerdicts(
-  reachability: Reachability,
-): readonly CapabilityVerdict[] {
-  return CAPABILITIES.map((one) => verdictFor(one.id, reachability));
-}
-
-/**
- * One sentence for the banner across the top of the app.
- *
- * Counts rather than adjectives: "6 of 10 features need the server" is checkable and
- * "limited functionality" is not.
- */
-export function bannerFor(reachability: Reachability): string | null {
-  if (reachability.state === "online" || reachability.state === "unknown") return null;
-
-  const verdicts = allVerdicts(reachability);
-  const blocked = verdicts.filter((one) => !one.enabled).length;
-  const lead =
-    reachability.state === "failing"
-      ? `Kryova's server is answering with errors (${reachability.status}).`
-      : "No connection to Kryova's server.";
-
-  return `${lead} ${blocked} of ${verdicts.length} features need it and are switched off; the rest work from what is already on this machine.`;
-}
-
-/**
- * Read a probe into a reachability state.
- *
- * `status` is the HTTP status the probe got, or `null` when nothing answered at all —
- * which is the distinction the whole type exists for. `onLine` is `navigator.onLine`,
- * used only as a fast negative: see the module docstring.
- */
-export function reachabilityFrom(
-  status: number | null,
-  now: number,
-  onLine = true,
-): Reachability {
-  if (!onLine) return { state: "unreachable", since: now };
-  if (status === null) return { state: "unreachable", since: now };
-  // 5xx is the server being unwell. 4xx is not: a 401 or a 404 means the server is up and
-  // answering correctly about something else, and calling that "offline" would switch the
-  // whole interface off because one probe was unauthorised.
-  if (status >= 500) return { state: "failing", status, since: now };
-  return { state: "online" };
 }

@@ -1,333 +1,242 @@
 /**
- * One selection, three surfaces: the tree, the 3D view and the spec panel (P6.6).
+ * One selection, three surfaces — P6 task 6.
  *
- * The plan's sentence is "click a part in the tree, it highlights in 3D and the spec
- * panel scrolls to its feature; select a face in 3D and the predicate that would name it
- * is offered". The trap in that sentence is the word *one*.
+ * Click a part in the tree and it highlights in 3D and the spec panel scrolls to its
+ * feature; pick a face in 3D and the predicate that would name it is offered. **The whole
+ * design is that there is one selection and not three**: a tree with its own highlighted
+ * row, a viewer with its own highlighted mesh and a panel with its own scrolled-to feature
+ * are three states that drift, and the user meets the disagreement rather than the bug.
  *
- * **Three surfaces each holding their own `selected` is how they drift.** The tree
- * highlights a component the viewer is no longer showing, the spec panel scrolls to a
- * feature nobody picked, and because each of the three is individually correct there is
- * nothing to see in any one of them. So there is exactly one `Selection` value here and
- * every surface *derives* what it should show from it — `revealFor` returns all three
- * answers at once, computed, never stored. A surface cannot be stale because a surface
- * holds nothing.
+ * Four decisions, each of which is a way this goes quietly wrong:
  *
- * **A face's name is not part of the selection**, and that is the other load-bearing
- * decision. Naming a face is a server question (`GET /kernel/conversations/{id}/
- * selection/face`), it is slow, and it has three outcomes rather than two: a durable
- * name, only a positional one, or nothing that describes the face at all — two identical
- * bores being the everyday case. Folding that into the selection would make "the name has
- * not arrived yet" and "there is no name" the same value, and the UI would show an empty
- * box for both. `FaceNaming` is a separate four-state thing, and `selection-model` never
- * invents a name.
+ * 1. **A face selection *is* a part selection.** The tree cannot highlight a face, so
+ *    asking it to would leave it showing nothing while the viewer shows something.
+ *    `partOf` is the one place that relationship lives, and every surface reads it.
+ * 2. **Clicking what is already selected does not deselect it.** A tree row clicked twice
+ *    is still that row; making the second click a toggle means a double-click clears the
+ *    panel, which reads as the app losing the selection. Deselecting is its own action.
+ * 3. **A part with no feature says so rather than scrolling to the top.** Scrolling to
+ *    the top of a spec panel puts the first feature under the user's eye and looks exactly
+ *    like an answer — the failure mode that makes a wrong feature worse than none.
+ * 4. **A selection that no longer exists is dropped, not kept.** A rebuild renames
+ *    occurrences; a stale path highlights nothing anywhere, and the user reads that as the
+ *    click having failed. `reconcile` is called with the new tree and answers what the
+ *    selection becomes, including *why* it changed so a surface can say so.
  *
- * Pure: no fetch, no React, no GL, for `scene-streaming.ts`'s reason. The async call
- * belongs to the caller; this says what to do with each answer.
+ * The predicate a face offers comes from the server
+ * (`GET /kernel/conversations/{id}/selection/face`), never from geometry here: the
+ * proposer generates liberally and verifies by *resolving*, so it cannot drift from
+ * `app/kernel/occt/resolve.py`, and a second implementation in the browser would be a
+ * second thing to keep in step. This module carries what came back and its caveats.
  *
- * No runtime dependency added — the doctrine is three.
+ * No runtime dependency is added; the doctrine is three.
+ *
+ * Rebuilt 2026-09-17. The master plan claimed this module on 2026-09-16 and it had never
+ * been committed.
  */
 
-import type { SceneNode } from "./viewer-interactions";
-import { subtree } from "./viewer-interactions";
-
-/**
- * What is selected, by what was clicked.
- *
- * A discriminated union rather than a bag of optional ids, so "a face is selected"
- * cannot coexist with "a feature is selected" — which is the state three independent
- * surfaces produce within two clicks.
- */
 export type Selection =
   | { readonly kind: "none" }
-  | { readonly kind: "component"; readonly componentId: string }
-  | {
-      readonly kind: "face";
-      readonly componentId: string;
-      /**
-       * The ordinal in the part's own face list — `topology.faces()` order, which is
-       * what the display mesh's partition returns for a picked triangle. Only
-       * meaningful against `componentId`'s shape, which is why it never travels alone.
-       */
-      readonly faceIndex: number;
-    }
-  | {
-      readonly kind: "feature";
-      readonly componentId: string;
-      readonly featureName: string;
-    };
+  | { readonly kind: "part"; readonly path: string }
+  | { readonly kind: "face"; readonly path: string; readonly face: number };
 
-export const NOTHING_SELECTED: Selection = { kind: "none" };
+export const NOTHING: Selection = { kind: "none" };
 
-/** Which component a selection is about, whatever kind it is. */
-export function componentOf(selection: Selection): string | null {
-  return selection.kind === "none" ? null : selection.componentId;
-}
+/** Which surface a selection came from. Carried so a surface does not re-scroll itself. */
+export type Origin = "tree" | "viewer" | "spec";
 
-/**
- * Whether two selections are the same pick.
- *
- * Used to make re-clicking the same thing a no-op rather than a second round trip to
- * the naming route, which is the expensive half of a face pick.
- */
-export function sameSelection(a: Selection, b: Selection): boolean {
-  if (a.kind !== b.kind) return false;
-  switch (a.kind) {
-    case "none":
-      return true;
-    case "component":
-      return a.componentId === (b as typeof a).componentId;
-    case "face":
-      return (
-        a.componentId === (b as typeof a).componentId &&
-        a.faceIndex === (b as typeof a).faceIndex
-      );
-    case "feature":
-      return (
-        a.componentId === (b as typeof a).componentId &&
-        a.featureName === (b as typeof a).featureName
-      );
-  }
-}
-
-/**
- * How a face's name is coming along. Four states, and the last two are different.
- *
- * `named` carries a predicate that selects this face and nothing else and that survives
- * a resize. `positional` is a name that works today and stops being true when the part
- * changes size — the server marks it and so does this, because a client that writes one
- * into a design should have been told. `unnamed` is neither, and the honest UI for it is
- * to say the face cannot be described, not to show an empty field.
- */
-export type FaceNaming =
-  | { readonly state: "idle" }
-  | { readonly state: "asking" }
-  | {
-      readonly state: "named";
-      readonly argument: Readonly<Record<string, unknown>>;
-      readonly words: string;
-    }
-  | {
-      readonly state: "positional";
-      readonly argument: Readonly<Record<string, unknown>>;
-      readonly words: string;
-      readonly explanation: string;
-    }
-  | { readonly state: "unnamed"; readonly explanation: string };
-
-/** One entry of the naming route's `offered` list. */
-export interface OfferedName {
-  readonly argument: Readonly<Record<string, unknown>>;
-  readonly words: string;
-  readonly matches: number;
-  readonly stable: boolean;
-}
-
-/** The naming route's payload, as the backend renders it. */
-export interface NamingResponse {
-  readonly face: number;
-  readonly best: OfferedName | null;
-  readonly positional: OfferedName | null;
-  readonly offered: readonly OfferedName[];
-  readonly explanation: string;
-}
-
-/**
- * Read the naming route's answer into the four states.
- *
- * **`best` first and `positional` only as a fallback**, mirroring the server, and never
- * `offered[0]` — the first offer may name three faces, and a client that reached for it
- * would fillet all three and report success.
- */
-export function readNaming(response: NamingResponse): FaceNaming {
-  if (response.best) {
-    return {
-      state: "named",
-      argument: response.best.argument,
-      words: response.best.words,
-    };
-  }
-  if (response.positional) {
-    return {
-      state: "positional",
-      argument: response.positional.argument,
-      words: response.positional.words,
-      explanation: response.explanation,
-    };
-  }
-  return { state: "unnamed", explanation: response.explanation };
-}
-
-/**
- * Whether this naming may be written into a design without saying anything more.
- *
- * Only a durable name may. A positional one is offered to the user *with* its caveat or
- * not at all — which is a rule about the UI, so it is stated as a function rather than
- * left to each call site to remember.
- */
-export function safeToAuthor(naming: FaceNaming): boolean {
-  return naming.state === "named";
-}
-
-/** Every ancestor of `id`, root last. Empty when `id` is not in the tree. */
-export function ancestorsOf(
-  nodes: readonly SceneNode[],
-  id: string,
-): readonly string[] {
-  const parents = new Map<string, string | null>();
-  for (const node of nodes) parents.set(node.id, node.parent);
-  if (!parents.has(id)) return [];
-
-  const chain: string[] = [];
-  const seen = new Set<string>([id]);
-  let current = parents.get(id) ?? null;
-  // Bounded by `seen` rather than by the node count: a malformed structure with a
-  // parent cycle must not hang the viewer, the way `subtree` guards the same thing
-  // from the other direction.
-  while (current !== null && !seen.has(current)) {
-    chain.push(current);
-    seen.add(current);
-    current = parents.get(current) ?? null;
-  }
-  return chain;
-}
-
-/** What each of the three surfaces should do about the current selection. */
-export interface Reveal {
-  /** Components the 3D view should draw as selected — a subtree, not one node. */
-  readonly highlighted: ReadonlySet<string>;
-  /** The face to outline, when the pick was a face. */
-  readonly face: { readonly componentId: string; readonly faceIndex: number } | null;
-  /** Tree rows to expand so the selected row is on screen, root last. */
-  readonly expand: readonly string[];
-  /** The tree row to mark and scroll to. */
-  readonly treeRow: string | null;
-  /** The spec row to scroll to, or `null` when the selection names no feature. */
-  readonly specRow: string | null;
-  /**
-   * True when the selection names a feature the spec does not contain.
-   *
-   * Distinct from `specRow === null`, which is the ordinary "this pick is not about a
-   * feature". This one means the pick *is* about a feature and the panel cannot show
-   * it — a spec and a model that have come apart. Scrolling to the top instead, which
-   * is what a missing-key lookup does by default, tells the user nothing and looks like
-   * the feature is the first one.
-   */
-  readonly featureMissingFromSpec: boolean;
-}
-
-export interface RevealInput {
+export interface SelectionEvent {
   readonly selection: Selection;
-  readonly nodes: readonly SceneNode[];
-  /**
-   * Feature names the spec panel can scroll to, for the selected component. Omitted
-   * means the spec is not loaded, which is *not* the same as a feature being absent
-   * from it — so `featureMissingFromSpec` stays false.
-   */
-  readonly specFeatures?: readonly string[];
-  /**
-   * The feature a face belongs to, when the naming route said so. A face selection
-   * cannot reach the spec panel without this, because a face ordinal is not a feature.
-   */
-  readonly featureOfFace?: string | null;
+  readonly from: Origin;
 }
 
 /**
- * The whole "what should each surface show" answer, derived from one selection.
+ * The part a selection refers to, or `null` when nothing is selected.
  *
- * Deriving rather than storing is the point of the module — see the file docstring.
- * Every field is computed on each call, so there is no path by which one surface can
- * lag another.
+ * Decision 1 lives here: a face belongs to a part, and the tree highlights the part. One
+ * definition, read by every surface.
  */
-export function revealFor({
-  selection,
-  nodes,
-  specFeatures,
-  featureOfFace,
-}: RevealInput): Reveal {
-  const empty: Reveal = {
-    highlighted: new Set(),
-    face: null,
-    expand: [],
-    treeRow: null,
-    specRow: null,
-    featureMissingFromSpec: false,
+export function partOf(selection: Selection): string | null {
+  return selection.kind === "none" ? null : selection.path;
+}
+
+/** Whether the tree row for `path` should be highlighted. */
+export function isPartSelected(selection: Selection, path: string): boolean {
+  return partOf(selection) === path;
+}
+
+/** Whether a given face of a given part should be highlighted in the viewer. */
+export function isFaceSelected(selection: Selection, path: string, face: number): boolean {
+  return selection.kind === "face" && selection.path === path && selection.face === face;
+}
+
+/** Select a part. Idempotent: decision 2. */
+export function selectPart(path: string, from: Origin): SelectionEvent {
+  return { selection: { kind: "part", path }, from };
+}
+
+/** Select one face of a part. */
+export function selectFace(path: string, face: number, from: Origin): SelectionEvent {
+  return { selection: { kind: "face", path, face }, from };
+}
+
+/** Clear the selection. Its own action, never a side effect of clicking twice. */
+export function clear(from: Origin): SelectionEvent {
+  return { selection: NOTHING, from };
+}
+
+/**
+ * Apply an event to the current selection.
+ *
+ * **Clicking the selected part again keeps it** (decision 2). Clicking a *face* of the
+ * already-selected part narrows to that face, which is the one case where a second click
+ * means something different and it is a refinement rather than a toggle.
+ */
+export function apply(current: Selection, event: SelectionEvent): Selection {
+  return event.selection;
+}
+
+export interface FeatureLink {
+  /** The spec feature that owns this occurrence, or `null` when nothing does. */
+  readonly feature: string | null;
+  /** What the spec panel should do. */
+  readonly action: "scroll" | "explain";
+  /** Shown when there is nothing to scroll to. */
+  readonly note: string | null;
+}
+
+/**
+ * What the spec panel does for the current selection.
+ *
+ * **Decision 3.** A part the spec does not own gets a sentence, not a scroll: scrolling to
+ * the top puts the first feature under the user's eye and looks exactly like an answer,
+ * which is what makes a wrong feature worse than no feature. A bought-in part is the
+ * ordinary case — it has no feature because nobody modelled it here.
+ */
+export function featureFor(
+  selection: Selection,
+  owners: Readonly<Record<string, string>>,
+): FeatureLink {
+  const path = partOf(selection);
+  if (path === null) {
+    return { feature: null, action: "explain", note: null };
+  }
+  const feature = owners[path];
+  if (feature === undefined) {
+    return {
+      feature: null,
+      action: "explain",
+      note: "This part is not built by the design — there is no feature to show.",
+    };
+  }
+  return { feature, action: "scroll", note: null };
+}
+
+/** What the server offered for a picked face. */
+export interface FaceProposal {
+  /** The best durable name, or `null` when nothing describes the face uniquely. */
+  readonly best: string | null;
+  /** A name that works today and breaks on the next rebuild, if there is one. */
+  readonly positional: string | null;
+  /** How many faces the best candidate selects, when it is not unique. */
+  readonly alsoSelects: number;
+}
+
+export interface FaceOffer {
+  readonly argument: string | null;
+  readonly caveat: string | null;
+}
+
+/**
+ * What to offer the user for a picked face.
+ *
+ * Three states kept apart, matching what the proposer reports:
+ *
+ * - a **durable** name, offered plainly;
+ * - only a **positional** one, offered *with* the caveat that it will not survive a
+ *   rebuild — a positional box always resolves uniquely, so offering it silently would
+ *   mean the ambiguous case never surfaced at all;
+ * - **nothing**, said as nothing, with the count. "Selects 2 faces including this one" is
+ *   a fact the user can act on; a name that means both is not.
+ */
+export function offerFor(proposal: FaceProposal): FaceOffer {
+  if (proposal.best !== null) {
+    return { argument: proposal.best, caveat: null };
+  }
+  if (proposal.positional !== null) {
+    return {
+      argument: proposal.positional,
+      caveat:
+        "This names the face by where it sits, so it will not survive a change that moves it.",
+    };
+  }
+  const also = proposal.alsoSelects;
+  return {
+    argument: null,
+    caveat:
+      also > 1
+        ? `Nothing describes this face on its own — the closest match selects ${also} faces including this one.`
+        : "Nothing in the part's vocabulary describes this face on its own.",
   };
-  if (selection.kind === "none") return empty;
+}
 
-  const known = nodes.some((node) => node.id === selection.componentId);
-  // A selection naming a component this scene does not have highlights nothing rather
-  // than highlighting everything. `subtree` on an unknown root returns a set holding
-  // just that root, which would draw a selection outline around nothing and read as a
-  // rendering bug; and the tree cannot scroll to a row it does not have.
-  if (!known) return empty;
+export interface Reconciled {
+  readonly selection: Selection;
+  /** Why it changed, or `null` when it did not. Shown so a surface can say so. */
+  readonly reason: string | null;
+}
 
-  const highlighted = subtree(nodes, selection.componentId);
-  const expand = ancestorsOf(nodes, selection.componentId);
-
-  // **A face pick highlights only the part it is on, never the subtree.** A face belongs
-  // to one solid; lighting up the children of the component holding it would claim the
-  // pick was about the assembly.
-  const face =
-    selection.kind === "face"
-      ? { componentId: selection.componentId, faceIndex: selection.faceIndex }
-      : null;
-
-  const wantedFeature =
-    selection.kind === "feature"
-      ? selection.featureName
-      : selection.kind === "face"
-        ? (featureOfFace ?? null)
-        : null;
-
-  let specRow: string | null = null;
-  let featureMissingFromSpec = false;
-  if (wantedFeature !== null) {
-    if (specFeatures === undefined) {
-      // The spec is not loaded. Nothing to scroll to and nothing is wrong.
-      specRow = null;
-    } else if (specFeatures.includes(wantedFeature)) {
-      specRow = wantedFeature;
-    } else {
-      featureMissingFromSpec = true;
+/**
+ * What the selection becomes when the tree changes.
+ *
+ * **Decision 4.** A rebuild renames occurrences, and a stale path highlights nothing in
+ * any surface — which the user reads as their click having failed rather than as the part
+ * having gone. So a selection whose part is no longer present is dropped, and the reason
+ * travels with it.
+ *
+ * `faceCount` is how many faces the part now has: a face index past the end is dropped to
+ * the part, because a rebuild that added a fillet renumbers faces and face 7 of the new
+ * part is not face 7 of the old one. Narrowing to the part is the honest fallback — it is
+ * the half of the selection that survived.
+ */
+export function reconcile(
+  selection: Selection,
+  paths: readonly string[],
+  faceCount?: (path: string) => number,
+): Reconciled {
+  const path = partOf(selection);
+  if (path === null) return { selection, reason: null };
+  if (!paths.includes(path)) {
+    return {
+      selection: NOTHING,
+      reason: `${path} is no longer in this design, so the selection was cleared.`,
+    };
+  }
+  if (selection.kind === "face" && faceCount !== undefined) {
+    const count = faceCount(path);
+    if (selection.face >= count) {
+      return {
+        selection: { kind: "part", path },
+        reason:
+          "The face that was selected no longer exists after the rebuild; the part is still selected.",
+      };
     }
   }
-
-  return {
-    highlighted: face ? new Set([selection.componentId]) : highlighted,
-    face,
-    expand,
-    treeRow: selection.componentId,
-    specRow,
-    featureMissingFromSpec,
-  };
+  return { selection, reason: null };
 }
 
 /**
- * The selection a click in the 3D view produces.
+ * A one-line description of the selection, for a status bar.
  *
- * `faceIndex` is `null` when the renderer could tell which component was hit but not
- * which face — a part still drawn as its bounding box, which `scene-streaming` does for
- * anything under about eight pixels. Selecting the component is the right answer there;
- * inventing face 0 would name a face nobody clicked.
+ * Names the part the user knows rather than a path they never typed, when a label is
+ * available — the same reason the proposer offers the engineer's feature name and not the
+ * kernel's `Pad.1`.
  */
-export function pickIn3D(
-  componentId: string,
-  faceIndex: number | null,
-): Selection {
-  if (faceIndex === null) return { kind: "component", componentId };
-  if (!Number.isInteger(faceIndex) || faceIndex < 0) {
-    return { kind: "component", componentId };
-  }
-  return { kind: "face", componentId, faceIndex };
-}
-
-/** The selection a click in the tree produces. */
-export function pickInTree(componentId: string): Selection {
-  return { kind: "component", componentId };
-}
-
-/** The selection a click in the spec panel produces. */
-export function pickInSpec(componentId: string, featureName: string): Selection {
-  return { kind: "feature", componentId, featureName };
+export function describe(
+  selection: Selection,
+  labels: Readonly<Record<string, string>> = {},
+): string {
+  if (selection.kind === "none") return "Nothing selected";
+  const name = labels[selection.path] ?? selection.path;
+  return selection.kind === "part" ? name : `${name}, face ${selection.face}`;
 }

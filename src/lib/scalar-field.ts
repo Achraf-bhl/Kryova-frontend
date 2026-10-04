@@ -1,315 +1,270 @@
 /**
- * Any scalar field on a mesh, with one colour scale and a probe (P6.5).
+ * A per-node scalar field as something a viewer can colour — P6 task 5.
  *
- * `surface-field.ts` carries von Mises stress from a solve, which was the only
- * field the viewer ever drew. This generalises the *drawing* half: stress,
- * displacement magnitude, wall thickness and fatigue damage are all one value
- * per node, and the difference between them is a name, a unit and how the scale
- * should be read — not a second renderer.
+ * **A sibling of `surface-field.ts`, not a widening of it.** That module is a *wire
+ * format* — a packed binary header with a JSON fallback — and this one is *presentation*.
+ * Merging them would put a palette in a decoder and a byte offset in a legend.
  *
- * It stays out of `surface-field.ts` rather than growing it, because that module
- * is about a wire format (a packed binary header, a JSON fallback) and this one
- * is about presentation. Two different reasons to change.
+ * Five kinds — stress, displacement, thickness, damage, temperature — differ by a name, a
+ * unit and a palette, **never by a second renderer**. `magnitudeField` is the bridge from
+ * what a solve returns (three numbers per node) to what a colour bar can show (one).
  *
- * **Three rules this codebase already holds, applied to a colour bar.**
+ * Three honesty rules, each of which is the reason a plausible picture would otherwise be
+ * wrong:
  *
- * *A field that was not measured is not a field of zeros.* A node with no value
- * is `NaN` on the wire and stays `NaN` here; `colourAt` gives it the absent
- * colour rather than the bottom of the scale, because the bottom of the scale is
- * a reading and "nobody computed this" is not one.
+ * 1. **An unmeasured node is `NaN` and gets `ABSENT` grey**, not the bottom of the scale,
+ *    and it is left out of the fitted range. The bottom of the scale is a reading; "nobody
+ *    computed this" is not one, and painting the second as the first is how a hole in a
+ *    result set becomes a region of low stress. `probeNode` answers `measured: false`
+ *    rather than `0`.
+ * 2. **A fitted range says it was fitted.** `auto: true` travels with it and the legend
+ *    prints the caveat, so a reader comparing two screenshots knows the colours do not
+ *    mean the same thing in both — which is the single easiest way to mislead with a
+ *    correct picture.
+ * 3. **Damage is never fitted.** `FIXED_RANGES` pins it to 0–1, because fitting 0–0.02
+ *    across the palette paints a part that will last fifty lifetimes in the same red as
+ *    one about to crack.
  *
- * *The scale's bounds are stated, never inferred silently.* `autoRange` exists
- * and returns the range it chose *with* the fact that it chose it, so a legend
- * can say "0–184 MPa (auto)" rather than presenting a fitted range as though
- * somebody set it.
+ * Thickness's ramp is **reversed on purpose** — thin is the problem — which is exactly the
+ * assumption a caller who has read "high is red" everywhere else would get wrong, so it is
+ * a property of the kind rather than a flag at the call site.
  *
- * *Units travel with the number.* A field carries its own unit string and the
- * legend renders it. A colour bar labelled 0–184 with no unit is the kind of
- * thing that gets read as millimetres.
+ * No runtime dependency is added; the palettes are arithmetic. The doctrine is three.
  *
- * No runtime dependency: the palettes are arithmetic, and the frontend's three
- * dependencies are doctrine.
+ * Rebuilt 2026-09-17. The master plan claimed this module on 2026-09-16 and it had never
+ * been committed; the rules above are what that status recorded.
  */
 
-/** What kind of quantity is being drawn. Decides the default palette. */
-export type FieldKind = "stress" | "displacement" | "thickness" | "damage" | "temperature";
+export type FieldKind =
+  | "stress"
+  | "displacement"
+  | "thickness"
+  | "damage"
+  | "temperature";
 
-export interface ScalarField {
-  kind: FieldKind;
-  /** Shown on the legend, e.g. "von Mises stress". */
-  label: string;
-  /** The backend's own units — MPa, mm, K. Nothing is converted anywhere. */
-  unit: string;
-  /** One value per node. `NaN` where the quantity was not computed. */
-  values: Float32Array;
+export interface FieldDefinition {
+  readonly kind: FieldKind;
+  /** What a legend calls it. */
+  readonly label: string;
+  /** The unit, in the mm-N-MPa system the whole product uses. */
+  readonly unit: string;
+  /** True when low values are the concern, so the ramp runs the other way. */
+  readonly lowIsBad: boolean;
 }
 
-export interface ScaleRange {
-  min: number;
-  max: number;
-  /** True when these bounds were fitted to the data rather than chosen. */
-  auto: boolean;
-}
-
-export type Rgb = readonly [number, number, number];
-
-/**
- * The colour for a node with no value.
- *
- * Mid grey, deliberately outside every palette below, so an unmeasured region
- * is visibly *not* part of the scale. Amber was the other candidate and is
- * wrong here: `verification-panel` already uses amber for "unmeasured but
- * relevant", and a whole surface of it would read as a warning about the part.
- */
-export const ABSENT: Rgb = [0.55, 0.55, 0.55];
-
-/**
- * Palettes as stop lists, interpolated in linear RGB.
- *
- * `damage` is deliberately not the same shape as the others: damage is a
- * fraction of life used, where 1.0 is failure, so its scale runs green-to-red
- * with the interesting end fixed rather than fitted. Reading "the red end" as
- * "the worst in this part" is right for stress and dangerous for damage, where
- * red must mean *spent*.
- */
-const PALETTES: Record<FieldKind, readonly Rgb[]> = {
-  // Blue → cyan → green → yellow → red. The viewer's existing stress ramp.
-  stress: [
-    [0.23, 0.3, 0.75],
-    [0.0, 0.75, 0.85],
-    [0.35, 0.8, 0.3],
-    [0.95, 0.85, 0.2],
-    [0.8, 0.15, 0.15],
-  ],
-  displacement: [
-    [0.1, 0.1, 0.35],
-    [0.25, 0.45, 0.8],
-    [0.55, 0.75, 0.95],
-    [0.95, 0.95, 0.95],
-  ],
-  // Thin is the problem, so thin is hot: the ramp is reversed on purpose.
-  thickness: [
-    [0.8, 0.15, 0.15],
-    [0.95, 0.85, 0.2],
-    [0.35, 0.8, 0.3],
-    [0.2, 0.5, 0.25],
-  ],
-  damage: [
-    [0.2, 0.6, 0.25],
-    [0.95, 0.85, 0.2],
-    [0.8, 0.15, 0.15],
-  ],
-  temperature: [
-    [0.15, 0.3, 0.7],
-    [0.6, 0.6, 0.6],
-    [0.85, 0.3, 0.1],
-  ],
+export const FIELDS: Readonly<Record<FieldKind, FieldDefinition>> = {
+  stress: { kind: "stress", label: "von Mises stress", unit: "MPa", lowIsBad: false },
+  displacement: { kind: "displacement", label: "Displacement", unit: "mm", lowIsBad: false },
+  // Thin is the problem, so the ramp is reversed. A property of the kind, never a flag a
+  // caller has to remember.
+  thickness: { kind: "thickness", label: "Wall thickness", unit: "mm", lowIsBad: true },
+  damage: { kind: "damage", label: "Fatigue damage", unit: "", lowIsBad: false },
+  temperature: { kind: "temperature", label: "Temperature", unit: "K", lowIsBad: false },
 };
 
 /**
- * Fields whose scale must not be fitted to the data.
+ * Ranges that must never be fitted to the data.
  *
- * Damage is a fraction of life: 0 to 1 means something absolute, and fitting
- * 0–0.02 across the full palette paints a part that will last fifty lifetimes
- * in the same red as one about to crack.
+ * Damage is the one that matters: 1.0 is the whole meaning of the quantity — the point at
+ * which the life is used up — and fitting 0–0.02 across the palette paints a part that
+ * will last fifty lifetimes in the same red as one about to crack.
  */
-export const FIXED_RANGES: Partial<Record<FieldKind, ScaleRange>> = {
+export const FIXED_RANGES: Partial<Record<FieldKind, Range>> = {
   damage: { min: 0, max: 1, auto: false },
 };
 
-export function paletteFor(kind: FieldKind): readonly Rgb[] {
-  return PALETTES[kind];
+export interface Range {
+  readonly min: number;
+  readonly max: number;
+  /** True when these bounds were fitted to the data rather than chosen. */
+  readonly auto: boolean;
+}
+
+/** The colour an unmeasured node gets. Grey, and never a colour on the ramp. */
+export const ABSENT: readonly [number, number, number] = [0.62, 0.62, 0.64];
+
+/** One node's value, or `NaN` where nothing was computed. */
+export type Field = readonly number[];
+
+/**
+ * The magnitude of a three-component result, per node — the bridge from a solve's output
+ * to something a colour bar can show.
+ *
+ * A node whose components are not all finite comes out `NaN` rather than a partial
+ * magnitude, because a displacement with one missing component is not a short
+ * displacement.
+ */
+export function magnitudeField(vectors: readonly (readonly number[])[]): number[] {
+  return vectors.map((vector) => {
+    if (vector.length !== 3 || !vector.every((component) => Number.isFinite(component))) {
+      return Number.NaN;
+    }
+    return Math.hypot(vector[0], vector[1], vector[2]);
+  });
 }
 
 /**
- * The range to draw this field over.
+ * The range to colour a field over.
  *
- * Ignores `NaN`, which is the whole reason it is not `Math.min(...values)`.
- * Returns a degenerate-but-valid range for a constant field, so a uniform part
- * draws in one colour rather than dividing by zero.
+ * `NaN` nodes are excluded from the fit — including them would need a value for them, and
+ * any value is a reading nobody took. A field with nothing measured in it gets 0–1 and
+ * says it was fitted, because there is no honest alternative and a legend showing 0–0 is
+ * worse than one showing a caveat.
  */
-export function autoRange(field: ScalarField): ScaleRange {
-  const fixed = FIXED_RANGES[field.kind];
-  if (fixed) return fixed;
-
-  let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
-  for (let i = 0; i < field.values.length; i++) {
-    const value = field.values[i];
-    if (Number.isNaN(value)) continue;
-    if (value < min) min = value;
-    if (value > max) max = value;
-  }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
-    // Every value was absent. A range over nothing is not 0–1; saying so is the
-    // caller's job, and `hasAnyValue` is how they ask.
-    return { min: 0, max: 0, auto: true };
-  }
+export function rangeFor(kind: FieldKind, field: Field): Range {
+  const fixed = FIXED_RANGES[kind];
+  if (fixed !== undefined) return fixed;
+  const measured = field.filter((value) => Number.isFinite(value));
+  if (measured.length === 0) return { min: 0, max: 1, auto: true };
+  const min = Math.min(...measured);
+  const max = Math.max(...measured);
+  // A constant field has no spread to colour. Widening it by a hair would paint noise
+  // across the whole palette; giving it a band keeps everything one colour, which is the
+  // truth about a constant field.
+  if (min === max) return { min, max: min + 1, auto: true };
   return { min, max, auto: true };
 }
 
-export function hasAnyValue(field: ScalarField): boolean {
-  for (let i = 0; i < field.values.length; i++) {
-    if (!Number.isNaN(field.values[i])) return true;
-  }
-  return false;
-}
-
-/** Where a value sits on the scale, clamped to 0–1. `NaN` stays `NaN`. */
-export function normalise(value: number, range: ScaleRange): number {
-  if (Number.isNaN(value)) return Number.NaN;
-  const span = range.max - range.min;
-  if (span <= 0) return 0;
-  const t = (value - range.min) / span;
-  return t < 0 ? 0 : t > 1 ? 1 : t;
-}
-
-/** The colour for one value, or `ABSENT` when there is no value. */
-export function colourAt(value: number, range: ScaleRange, kind: FieldKind): Rgb {
-  const t = normalise(value, range);
-  if (Number.isNaN(t)) return ABSENT;
-  return sample(paletteFor(kind), t);
-}
-
-/** Linear interpolation along a stop list. `t` is already clamped to 0–1. */
-export function sample(stops: readonly Rgb[], t: number): Rgb {
-  if (stops.length === 1) return stops[0];
-  const scaled = t * (stops.length - 1);
-  const index = Math.min(Math.floor(scaled), stops.length - 2);
-  const local = scaled - index;
-  const a = stops[index];
-  const b = stops[index + 1];
-  return [
-    a[0] + (b[0] - a[0]) * local,
-    a[1] + (b[1] - a[1]) * local,
-    a[2] + (b[2] - a[2]) * local,
-  ];
+function clamp01(value: number): number {
+  return value < 0 ? 0 : value > 1 ? 1 : value;
 }
 
 /**
- * Per-node colours for the whole field, ready to upload as a vertex attribute.
+ * Where a value sits on its ramp, 0 to 1, or `null` when it was never measured.
  *
- * One pass, one allocation. The absent colour is written like any other, so a
- * partly-computed field draws without the caller branching per node.
+ * `null` rather than 0: the caller has to decide to paint `ABSENT`, and a function that
+ * returned 0 would let it forget.
  */
-export function colourBuffer(field: ScalarField, range: ScaleRange): Float32Array {
-  const palette = paletteFor(field.kind);
-  const out = new Float32Array(field.values.length * 3);
-  for (let i = 0; i < field.values.length; i++) {
-    const t = normalise(field.values[i], range);
-    const colour = Number.isNaN(t) ? ABSENT : sample(palette, t);
-    out[i * 3] = colour[0];
-    out[i * 3 + 1] = colour[1];
-    out[i * 3 + 2] = colour[2];
+export function normalise(value: number, range: Range, kind: FieldKind): number | null {
+  if (!Number.isFinite(value)) return null;
+  const span = range.max - range.min;
+  const position = span === 0 ? 0 : (value - range.min) / span;
+  const clamped = clamp01(position);
+  return FIELDS[kind].lowIsBad ? 1 - clamped : clamped;
+}
+
+/**
+ * A blue-to-red ramp, as arithmetic.
+ *
+ * Deliberately simple and deliberately not a perceptual colour space: the legend carries
+ * the numbers, and a viewer reads a picture against the legend rather than by naming a
+ * colour. A dependency for this would be a dependency for arithmetic.
+ */
+export function ramp(position: number): [number, number, number] {
+  const t = clamp01(position);
+  // Blue → cyan → green → yellow → red, in four linear segments.
+  if (t < 0.25) return [0, 4 * t, 1];
+  if (t < 0.5) return [0, 1, 1 - 4 * (t - 0.25)];
+  if (t < 0.75) return [4 * (t - 0.5), 1, 0];
+  return [1, 1 - 4 * (t - 0.75), 0];
+}
+
+/** The colour for one node: its ramp position, or `ABSENT` grey when unmeasured. */
+export function colourFor(
+  value: number,
+  range: Range,
+  kind: FieldKind,
+): readonly [number, number, number] {
+  const position = normalise(value, range, kind);
+  return position === null ? ABSENT : ramp(position);
+}
+
+/** Every node's colour, flat, ready for a vertex buffer. */
+export function colourField(
+  field: Field,
+  kind: FieldKind,
+  range: Range = rangeFor(kind, field),
+): number[] {
+  const out: number[] = [];
+  for (const value of field) {
+    const [r, g, b] = colourFor(value, range, kind);
+    out.push(r, g, b);
   }
   return out;
 }
 
-export interface LegendTick {
-  value: number;
-  label: string;
-  /** Position along the bar, 0 at the bottom. */
-  at: number;
+export interface Probe {
+  readonly node: number;
+  readonly measured: boolean;
+  readonly value: number | null;
+  /** What to show: the value with its unit, or why there is nothing. */
+  readonly text: string;
+}
+
+/**
+ * What one node reads.
+ *
+ * **`measured: false` rather than `0`**, and a node index outside the field is refused
+ * rather than clamped: a probe that answers about the nearest node it does have is
+ * answering a question nobody asked, at a point the user pointed at.
+ */
+export function probeNode(field: Field, kind: FieldKind, node: number): Probe {
+  const definition = FIELDS[kind];
+  if (!Number.isInteger(node) || node < 0 || node >= field.length) {
+    return {
+      node,
+      measured: false,
+      value: null,
+      text: `There is no node ${node} in this field.`,
+    };
+  }
+  const value = field[node];
+  if (!Number.isFinite(value)) {
+    return {
+      node,
+      measured: false,
+      value: null,
+      text: `${definition.label} was not computed at this node.`,
+    };
+  }
+  const unit = definition.unit ? ` ${definition.unit}` : "";
+  return {
+    node,
+    measured: true,
+    value,
+    text: `${definition.label}: ${value.toPrecision(4)}${unit}`,
+  };
 }
 
 export interface Legend {
-  label: string;
-  unit: string;
-  range: ScaleRange;
-  ticks: LegendTick[];
-  /** Rendered beside the bar when the bounds were fitted rather than chosen. */
-  note: string | null;
-  stops: readonly Rgb[];
+  readonly label: string;
+  readonly unit: string;
+  readonly min: number;
+  readonly max: number;
+  /** The caveat to print, or `null` when the bounds were chosen rather than fitted. */
+  readonly caveat: string | null;
+  /** Ticks from min to max, evenly spaced, for the bar's labels. */
+  readonly ticks: readonly number[];
+  readonly absentNote: string | null;
 }
 
 /**
- * The legend for a field, including whether its bounds were somebody's decision.
+ * The legend beside the colour bar.
  *
- * The `note` is not decoration. A reader comparing two screenshots of the same
- * part needs to know whether the colours mean the same thing in both, and with
- * a fitted range they do not.
+ * It states its own bounds and whether they were fitted, because two screenshots of the
+ * same part with different auto-fitted ranges look like two different results — the
+ * easiest way to mislead with a picture that is individually correct.
  */
-export function legendFor(field: ScalarField, range: ScaleRange, ticks = 5): Legend {
-  const count = Math.max(2, ticks);
-  const span = range.max - range.min;
+export function legendFor(kind: FieldKind, field: Field, range = rangeFor(kind, field)): Legend {
+  const definition = FIELDS[kind];
+  const steps = 5;
+  const ticks = Array.from(
+    { length: steps },
+    (_, index) => range.min + ((range.max - range.min) * index) / (steps - 1),
+  );
+  const absent = field.filter((value) => !Number.isFinite(value)).length;
   return {
-    label: field.label,
-    unit: field.unit,
-    range,
-    stops: paletteFor(field.kind),
-    ticks: Array.from({ length: count }, (_, index) => {
-      const at = index / (count - 1);
-      const value = range.min + span * at;
-      return { value, at, label: formatTick(value, span) };
-    }),
-    note: range.auto
-      ? "Scale fitted to this result — the same colour means a different value on another run."
+    label: definition.label,
+    unit: definition.unit,
+    min: range.min,
+    max: range.max,
+    caveat: range.auto
+      ? "Scale fitted to this result. Two views with different scales are not comparable."
       : null,
+    ticks,
+    absentNote:
+      absent > 0
+        ? `${absent} node${absent === 1 ? "" : "s"} shown grey: not computed, not zero.`
+        : null,
   };
-}
-
-function formatTick(value: number, span: number): string {
-  if (span === 0) return value.toPrecision(3);
-  const magnitude = Math.abs(span);
-  const decimals = magnitude >= 100 ? 0 : magnitude >= 10 ? 1 : magnitude >= 1 ? 2 : 4;
-  return value.toFixed(decimals);
-}
-
-export interface Probe {
-  nodeIndex: number;
-  value: number;
-  /** The field's own unit, so a caller cannot label it with another's. */
-  unit: string;
-  label: string;
-  /** False when this node carries no value — never reported as 0. */
-  measured: boolean;
-}
-
-/**
- * Read one node's value, for "what is it here?".
- *
- * Returns `measured: false` rather than a zero for an absent value, and throws
- * for a node index that is not in the field — a probe that silently answered
- * about the wrong node would be worse than one that failed, because the number
- * it returns looks exactly like an answer.
- */
-export function probeNode(field: ScalarField, nodeIndex: number): Probe {
-  if (!Number.isInteger(nodeIndex) || nodeIndex < 0 || nodeIndex >= field.values.length) {
-    throw new RangeError(
-      `Node ${nodeIndex} is not in this field, which has ${field.values.length} nodes.`,
-    );
-  }
-  const value = field.values[nodeIndex];
-  return {
-    nodeIndex,
-    value,
-    unit: field.unit,
-    label: field.label,
-    measured: !Number.isNaN(value),
-  };
-}
-
-/**
- * The magnitude of a per-node vector, as a scalar field.
- *
- * The bridge from what a solve returns (displacement as xyz per node) to what
- * this module draws. Kept here rather than in `surface-field.ts` because it is
- * a presentation choice: the magnitude is what a colour bar can show, and the
- * direction is what an arrow glyph would.
- */
-export function magnitudeField(
-  triples: Float32Array,
-  kind: FieldKind,
-  label: string,
-  unit: string,
-): ScalarField {
-  const count = Math.floor(triples.length / 3);
-  const values = new Float32Array(count);
-  for (let i = 0; i < count; i++) {
-    const x = triples[i * 3];
-    const y = triples[i * 3 + 1];
-    const z = triples[i * 3 + 2];
-    values[i] = Math.sqrt(x * x + y * y + z * z);
-  }
-  return { kind, label, unit, values };
 }

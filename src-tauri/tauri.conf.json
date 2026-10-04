@@ -31,7 +31,6 @@
     "active": true,
     "targets": [
       "msi",
-      "nsis",
       "deb",
       "appimage",
       "dmg"
@@ -53,10 +52,6 @@
           "en-US"
         ],
         "upgradeCode": "6f6c5c1e-9a2b-5d4e-8f37-2b9c4a1d7e60"
-      },
-      "nsis": {
-        "installerIcon": "icons/icon.ico",
-        "installMode": "perMachine"
       }
     },
     "linux": {

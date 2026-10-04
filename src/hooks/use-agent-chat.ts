@@ -92,6 +92,15 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
    */
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const reportedProjectRef = useRef<string | null>(null);
+  /**
+   * The decision this turn is waiting on, held between the `intervention` event
+   * and the `done` that folds it into the turn.
+   *
+   * A ref rather than state because nothing renders it until `settleSteps` runs
+   * — rendering a prompt beside a half-written answer would ask somebody to
+   * decide before they had read what happened.
+   */
+  const interventionRef = useRef<Turn["intervention"] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   /**
    * Whether a stop has been asked for and not yet taken effect (P5.6).
@@ -144,10 +153,20 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
 
   /** Fold this turn's steps into the answer it produced, and clear them. */
   const settleSteps = useCallback(
-    (extra?: { truncated?: boolean; stopReason?: Turn["stopReason"]; error?: string }) => {
+    (extra?: {
+      truncated?: boolean;
+      stopReason?: Turn["stopReason"];
+      error?: string;
+      intervention?: Turn["intervention"];
+    }) => {
       const steps = liveStepsRef.current;
       updateSteps(() => []);
-      if (steps.length === 0 && !extra?.error && !extra?.truncated) return;
+      // A decision counts as something to settle even with no steps and no
+      // truncation: dropping it here would be the 2026-09-10 defect again, in
+      // which `needs_input` arrived on the wire and was silently discarded one
+      // layer above the banner that needed it.
+      if (steps.length === 0 && !extra?.error && !extra?.truncated && !extra?.intervention)
+        return;
 
       setTurns((previous) => {
         // Attach to the answer this turn produced — the last turn, which is
@@ -163,6 +182,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
               ...(steps.length > 0 ? { steps } : {}),
               ...(extra?.truncated ? { truncated: true } : {}),
               ...(extra?.stopReason ? { stopReason: extra.stopReason } : {}),
+              ...(extra?.intervention ? { intervention: extra.intervention } : {}),
               ...(extra?.error ? { error: extra.error } : {}),
             },
           ];
@@ -176,6 +196,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ...(steps.length > 0 ? { steps } : {}),
             ...(extra?.truncated ? { truncated: true } : {}),
             ...(extra?.stopReason ? { stopReason: extra.stopReason } : {}),
+            ...(extra?.intervention ? { intervention: extra.intervention } : {}),
             ...(extra?.error ? { error: extra.error } : {}),
           },
         ];
@@ -264,6 +285,15 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             { id: nextTurnId("assistant"), role: "assistant", content: event.content },
           ]);
           break;
+        case "intervention": {
+          // Held, not rendered. The prompt belongs under the finished answer,
+          // so `settleSteps` attaches it on `done`. `type` is stripped because
+          // the rest of the event *is* the Intervention.
+          const { type, ...decision } = event;
+          void type;
+          interventionRef.current = decision;
+          break;
+        }
         case "done":
           if (event.conversation_id && conversationIdRef.current !== event.conversation_id) {
             conversationIdRef.current = event.conversation_id;
@@ -292,7 +322,14 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ...(event.stop_reason && event.stop_reason !== "finished"
               ? { stopReason: event.stop_reason }
               : {}),
+            // Preferred over whatever the `intervention` event left in the ref,
+            // because `done` is the authoritative copy: a reconnect mid-turn
+            // replays from the buffer and may never see the standalone event.
+            ...(event.intervention ?? interventionRef.current
+              ? { intervention: event.intervention ?? interventionRef.current! }
+              : {}),
           });
+          interventionRef.current = null;
           setThinking(null);
           setNarration("");
           break;

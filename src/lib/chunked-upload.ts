@@ -26,46 +26,6 @@ export interface ChunkedUploadTransport {
   uploadGeometry(projectId: string, file: File, note?: string): Promise<GeometryVersionRead>;
 }
 
-/**
- * What `uploadDocumentFile` needs: the chunk loop, and the attachment row.
- *
- * A separate interface rather than two more methods on the one above, because
- * the two uploads genuinely need different things — a document never touches
- * `attachGeometry` and a part never touches `createAttachment` — and widening
- * the shared one would make every existing test stub implement a method its
- * path cannot reach.
- */
-export interface DocumentUploadTransport
-  extends Pick<ChunkedUploadTransport, "beginUpload" | "uploadChunk" | "completeUpload"> {
-  createAttachment(body: {
-    media_id: string;
-    conversation_id?: string | null;
-    project_id?: string | null;
-    filename?: string;
-  }): Promise<AttachmentRead>;
-}
-
-export interface DocumentUploadOptions {
-  /** Called with 0–100 after each chunk lands. */
-  onProgress?: (percent: number) => void;
-  transport?: DocumentUploadTransport;
-}
-
-/**
- * The extensions that are *parts* rather than documents.
- *
- * The composer routes on this: a part becomes a geometry version of the
- * project, everything else becomes an attachment of the conversation. Kept
- * beside the uploader rather than in the component so the two paths cannot
- * disagree about what a part is.
- */
-export const PART_EXTENSIONS = [".step", ".stp", ".iges", ".igs", ".stl"] as const;
-
-export function isPartFilename(filename: string): boolean {
-  const lowered = filename.toLowerCase();
-  return PART_EXTENSIONS.some((extension) => lowered.endsWith(extension));
-}
-
 export interface UploadOptions {
   /** Called with 0–100 after each chunk lands. Never called on the single-shot path. */
   onProgress?: (percent: number) => void;
@@ -107,25 +67,51 @@ export async function uploadGeometryFile(
 }
 
 /**
- * Upload one document and attach it to the conversation (master plan P4.6).
+ * The slice of the API a *document* upload needs.
  *
- * The other half of `uploadGeometryFile`, and the one that was missing:
- * `api.createAttachment` had existed since P4.1 with no caller, so a
- * spreadsheet, a PDF or a photograph dropped into the composer became a
- * geometry upload or nothing at all. Found 2026-09-15.
+ * A second interface rather than four more methods on `ChunkedUploadTransport`:
+ * a document never calls `attachGeometry` and a part never calls
+ * `createAttachment`, so widening the shared one would make every existing stub
+ * implement two methods it has no use for, and would let a caller reach the
+ * wrong ending.
+ */
+export interface DocumentUploadTransport {
+  beginUpload(
+    filename: string,
+    totalSize: number,
+    chunkSize?: number,
+  ): Promise<{ id: string; chunk_size: number; total_chunks: number }>;
+  uploadChunk(uploadId: string, index: number, data: Blob): Promise<void>;
+  completeUpload(uploadId: string): Promise<{ id: string; filename: string; size_bytes: number }>;
+  createAttachment(body: {
+    media_id: string;
+    conversation_id?: string | null;
+    project_id?: string | null;
+    filename?: string;
+  }): Promise<AttachmentRead>;
+}
+
+export interface DocumentUploadOptions {
+  onProgress?: (percent: number) => void;
+  conversationId?: string | null;
+  projectId?: string | null;
+  transport?: DocumentUploadTransport;
+}
+
+/**
+ * Upload one document and attach it to a conversation.
  *
- * Always chunked, whatever the size. The single-shot route is
- * `uploadGeometry`, which makes a geometry version — exactly what a document
- * must not become — and the chunk loop is the only path that yields a bare
- * media id. A small file is one chunk, so the cost is two extra round trips on
- * a file that was going to be read by a model anyway.
+ * **Always chunked, whatever the size.** The single-shot route is
+ * `uploadGeometry`, and that makes a *geometry version* of the project — the one
+ * thing a document must not silently become. The chunk loop is the only path
+ * that yields a bare media id for `createAttachment` to name.
  *
- * The attachment is created whatever the reading produced: an unsupported
- * format is a recorded outcome with a row, not a failed upload, because
- * refusing loses the fact that the user handed us something.
+ * The backend answers 201 whatever the reading produced, so an unsupported
+ * format comes back as an `AttachmentRead` whose `status` says so rather than
+ * as a thrown error. Callers report that outcome; they must not treat a
+ * resolved promise as "it was read".
  */
 export async function uploadDocumentFile(
-  conversationId: string,
   file: File,
   options: DocumentUploadOptions = {},
 ): Promise<AttachmentRead> {
@@ -142,10 +128,11 @@ export async function uploadDocumentFile(
   const media = await transport.completeUpload(session.id);
   return transport.createAttachment({
     media_id: media.id,
-    conversation_id: conversationId,
-    // The name the user's own filesystem gave it, not the stored blob's: the
-    // backend sniffs content first and falls back to this extension, and the
-    // stored blob is named by digest and has no extension at all.
+    conversation_id: options.conversationId ?? null,
+    project_id: options.projectId ?? null,
+    // The name the user recognises. The stored blob is named by its digest, and
+    // the backend sniffs content *with* this name — a CSV reaches its reader
+    // only because the filename travels with the bytes.
     filename: file.name,
   });
 }

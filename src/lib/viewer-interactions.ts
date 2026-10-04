@@ -1,358 +1,262 @@
 /**
- * What an engineer does to a view: cut it, explode it, hide things, come back to it (P6.4).
+ * Section planes, exploded views, hide/isolate and bookmarks — P6 task 4.
  *
- * Four interactions that are one module because they are one *state*: a section
- * plane, an explode factor, a set of hidden subtrees and a camera are all the
- * answer to "what am I looking at", and the bookmark at the bottom of this file
- * is the reason they cannot live in four places. A bookmark that stored only the
- * camera would restore the wrong picture the moment a section plane or a hidden
- * subtree had moved since — and it would do it silently, which is the failure
- * this module is shaped to avoid.
+ * **The four are one module because they are one state**, and the bookmark is why. A
+ * bookmark that stored only the camera restores a solid block where the user saw a bore,
+ * or a machine with forty fasteners that were hidden when it was taken. So it carries the
+ * sections, the hidden set and the explode factor too, and deep-copies in both directions
+ * so that dragging a slider cannot rewrite a saved view.
  *
- * Pure arithmetic and set logic over the scene tree, for `scene-streaming.ts`'s
- * reason: this is the part worth testing and it is untestable once tangled with
- * a GL context. Nothing here draws, fetches or measures.
+ * Measuring is deliberately **not** here: it is a backend query
+ * (`GET /kernel/conversations/{id}/measure/between` and `.../measure/element`), because
+ * the viewer's mesh detail comes from screen size, so a browser-side distance would be
+ * wrong by the chord error *and would change when the camera moved*. Two measurers agree
+ * today and disagree after a fix to one.
  *
- * **Measuring is deliberately not here.** P6.4 asks for point-point, edge and
- * face-face measurement *against real geometry*, and the viewer's mesh is
- * decimated — `scene-streaming` picks its level from screen size, so a distance
- * computed here would be wrong by the chord error and would change when the
- * camera moved. The measurement is a backend query,
- * `GET /kernel/conversations/{id}/measure/between`, which drives the kernel's
- * own `catia_measure_between` over the B-rep. There is no client-side measurer
- * to be tempted by.
+ * Four traps, each pinned by a test, each producing a plausible wrong picture rather than
+ * an error:
  *
- * No runtime dependency: the frontend has three by doctrine and this is vector
- * arithmetic on axis-aligned boxes.
+ * 1. **A section plane's normal points at the material that is removed.** That is
+ *    `catia_split`'s convention, and two conventions for one question is how a part ends
+ *    up mirrored with every test green.
+ * 2. **Sides are decided on the box's corners, not its centre.** A long member running
+ *    through the cut reads as wholly on one side from its centre, and then vanishes from
+ *    the section view it is supposed to appear in.
+ * 3. **A component centred on the assembly's centre does not move when exploded.**
+ *    Normalising a zero vector gives `NaN`, and a `NaN` translation removes the part from
+ *    the view with nothing raising — on a symmetric machine that part is the main shaft.
+ * 4. **Hide wins over isolate**, and an isolated root that is not in the tree shows
+ *    *nothing* rather than falling back to the whole machine. A silent fallback to
+ *    everything is the opposite of what "isolate" was asked for.
+ *
+ * No runtime dependency is added; the doctrine is three.
+ *
+ * Rebuilt 2026-09-17. The master plan claimed this module on 2026-09-16 and it had never
+ * been committed; the traps above are what that status recorded.
  */
 
-import { type BoundingBox, centre } from "./scene-streaming";
+export type Vec3 = readonly [number, number, number];
 
-export type Vec3 = [number, number, number];
+/** An axis-aligned bounding box in millimetres. */
+export interface Box {
+  readonly min: Vec3;
+  readonly max: Vec3;
+}
+
+/** One occurrence in the viewer: its path and where it sits. */
+export interface ViewerPart {
+  readonly path: string;
+  readonly box: Box;
+}
 
 /**
- * A cutting plane.
- *
- * **The normal points at the material that is removed**, which is
- * `catia_split`'s convention and `app/render/section.py`'s. It is stated here
- * because two conventions for one question is how a part ends up mirrored with
- * every test green — the picture is plausible either way round and nothing
- * catches it.
- *
- * `offset` is the signed distance from the origin along the normal, so the
- * plane is `{ p : dot(p, normal) = offset }`.
+ * A cutting plane. **`normal` points at the material that is removed** — `catia_split`'s
+ * convention, kept here so the viewer and the kernel cannot disagree about which half the
+ * user asked to lose.
  */
 export interface SectionPlane {
-  normal: Vec3;
-  offset: number;
-  enabled: boolean;
-}
-
-export function dot(a: Vec3, b: Vec3): number {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-export function length(v: Vec3): number {
-  return Math.sqrt(dot(v, v));
-}
-
-/**
- * How far a point is past the plane, positive on the side that is removed.
- *
- * Normalises the plane's normal rather than assuming it is unit-length, so the
- * number is a distance in millimetres whatever the caller passed. A plane with
- * a zero normal is not a plane; it returns `NaN` and `clips` reads that as
- * "cuts nothing" rather than as "cuts everything".
- */
-export function signedDistance(plane: SectionPlane, point: Vec3): number {
-  const scale = length(plane.normal);
-  if (scale === 0) return Number.NaN;
-  return (dot(plane.normal, point) - plane.offset) / scale;
-}
-
-/** Is this point in the material the plane removes? */
-export function clipsPoint(plane: SectionPlane, point: Vec3): boolean {
-  if (!plane.enabled) return false;
-  const d = signedDistance(plane, point);
-  return Number.isNaN(d) ? false : d > 0;
-}
-
-/** Where a whole box sits relative to a plane. */
-export type Side = "kept" | "removed" | "crossing";
-
-/**
- * Which side of the plane this box is on, testing the box's **corners**.
- *
- * Testing the centre alone would classify half the parts in an assembly wrongly
- * — a long member through the cut reads as entirely on one side — and the
- * consequence is not a wrong colour but a part that vanishes from a section
- * view while still being in the part. A crossing box is drawn and clipped by
- * the renderer; only a wholly removed one is dropped.
- */
-export function sideOf(plane: SectionPlane, box: BoundingBox): Side {
-  if (!plane.enabled) return "kept";
-  let anyRemoved = false;
-  let anyKept = false;
-  for (let i = 0; i < 8; i++) {
-    const corner: Vec3 = [
-      i & 1 ? box.max[0] : box.min[0],
-      i & 2 ? box.max[1] : box.min[1],
-      i & 4 ? box.max[2] : box.min[2],
-    ];
-    const d = signedDistance(plane, corner);
-    if (Number.isNaN(d)) return "kept";
-    if (d > 0) anyRemoved = true;
-    else anyKept = true;
-    if (anyRemoved && anyKept) return "crossing";
-  }
-  return anyRemoved ? "removed" : "kept";
-}
-
-/**
- * A box that survives every enabled plane — `"removed"` only if some plane
- * removes all of it.
- *
- * Planes compose as an intersection of half-spaces, which is what a viewer with
- * three sliders means by three section planes.
- */
-export function sideOfAll(planes: readonly SectionPlane[], box: BoundingBox): Side {
-  let result: Side = "kept";
-  for (const plane of planes) {
-    const side = sideOf(plane, box);
-    if (side === "removed") return "removed";
-    if (side === "crossing") result = "crossing";
-  }
-  return result;
-}
-
-/** A plane through the middle of an axis of a box, cutting away the far half. */
-export function midPlane(box: BoundingBox, axis: "x" | "y" | "z"): SectionPlane {
-  const index = axis === "x" ? 0 : axis === "y" ? 1 : 2;
-  const normal: Vec3 = [0, 0, 0];
-  normal[index] = 1;
-  return { normal, offset: centre(box)[index], enabled: true };
-}
-
-/** One node of the product structure, as the viewer holds it. */
-export interface SceneNode {
-  id: string;
-  /** The component this one sits in, or `null` at the root. */
-  parent: string | null;
-  box: BoundingBox;
-}
-
-/**
- * Where each component moves to at a given explode factor.
- *
- * Radially outward from the assembly's centre: the direction is the component's
- * own centre seen from the assembly's, and the distance is that separation times
- * the factor. Factor 0 is the assembled machine and is the identity, so the
- * animation has nothing special at its start.
- *
- * **A component centred exactly on the assembly's centre has no direction**, and
- * the honest answer is that it does not move. Normalising a zero vector gives
- * `NaN`, and a `NaN` translation puts the part at no position at all — it
- * disappears from the view with nothing raising, which reads as a part that was
- * never loaded. On a symmetric machine that is the *main shaft*.
- */
-export function explodeOffsets(
-  nodes: readonly SceneNode[],
-  factor: number,
-): Map<string, Vec3> {
-  const offsets = new Map<string, Vec3>();
-  if (nodes.length === 0) return offsets;
-
-  const origin = assemblyCentre(nodes);
-  for (const node of nodes) {
-    const c = centre(node.box);
-    const away: Vec3 = [c[0] - origin[0], c[1] - origin[1], c[2] - origin[2]];
-    const separation = length(away);
-    if (separation === 0) {
-      offsets.set(node.id, [0, 0, 0]);
-      continue;
-    }
-    offsets.set(node.id, [away[0] * factor, away[1] * factor, away[2] * factor]);
-  }
-  return offsets;
-}
-
-/** The centre of the box that contains every node. */
-export function assemblyCentre(nodes: readonly SceneNode[]): Vec3 {
-  const min: Vec3 = [Infinity, Infinity, Infinity];
-  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
-  for (const node of nodes) {
-    for (let axis = 0; axis < 3; axis++) {
-      if (node.box.min[axis] < min[axis]) min[axis] = node.box.min[axis];
-      if (node.box.max[axis] > max[axis]) max[axis] = node.box.max[axis];
-    }
-  }
-  if (!Number.isFinite(min[0])) return [0, 0, 0];
-  return [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
-}
-
-/** Every node under `rootId`, including it. */
-export function subtree(nodes: readonly SceneNode[], rootId: string): Set<string> {
-  const children = new Map<string, string[]>();
-  for (const node of nodes) {
-    if (node.parent === null) continue;
-    const siblings = children.get(node.parent);
-    if (siblings) siblings.push(node.id);
-    else children.set(node.parent, [node.id]);
-  }
-
-  const found = new Set<string>();
-  const pending = [rootId];
-  while (pending.length > 0) {
-    const id = pending.pop() as string;
-    // Guards a cycle as well as a diamond. A product structure should be a tree
-    // and a malformed one must not hang the viewer.
-    if (found.has(id)) continue;
-    found.add(id);
-    for (const child of children.get(id) ?? []) pending.push(child);
-  }
-  return found;
-}
-
-export interface VisibilityState {
-  /** Subtrees the user has hidden. */
-  hiddenRoots: readonly string[];
-  /** Show only this subtree, or `null` for the whole machine. */
-  isolatedRoot: string | null;
-}
-
-export const NOTHING_HIDDEN: VisibilityState = { hiddenRoots: [], isolatedRoot: null };
-
-/**
- * Which nodes are visible.
- *
- * **Isolate narrows and hide subtracts, and hide wins where they disagree** —
- * isolating a gearbox and then hiding its housing must leave the gears showing,
- * which is the whole point of doing both. The opposite rule (isolate re-showing
- * what was hidden) is the one that feels like the viewer forgetting an
- * instruction.
- *
- * An isolated root that is not in the tree shows **nothing**, rather than
- * quietly falling back to the whole machine: the user asked to see one thing,
- * and showing them everything instead is indistinguishable from the isolate not
- * having worked.
- */
-export function visible(
-  nodes: readonly SceneNode[],
-  state: VisibilityState = NOTHING_HIDDEN,
-): Set<string> {
-  const shown = new Set<string>();
-  const kept =
-    state.isolatedRoot === null ? null : subtree(nodes, state.isolatedRoot);
-
-  const hidden = new Set<string>();
-  for (const root of state.hiddenRoots) {
-    for (const id of subtree(nodes, root)) hidden.add(id);
-  }
-
-  for (const node of nodes) {
-    if (kept !== null && !kept.has(node.id)) continue;
-    if (hidden.has(node.id)) continue;
-    shown.add(node.id);
-  }
-  return shown;
-}
-
-export interface CameraPose {
-  position: Vec3;
-  target: Vec3;
-  up: Vec3;
-}
-
-/**
- * "The view we were talking about", saved against a conversation.
- *
- * It stores the **whole view state**, not just the camera, and that is the
- * decision worth defending. A bookmark taken through a section plane and
- * restored without one shows a solid block where the user saw a bore; a bookmark
- * taken with forty fasteners hidden and restored without that shows a different
- * machine. Both restore a camera correctly and show the wrong thing, and neither
- * announces it — so the state travels with the pose.
- *
- * `savedAt` is an ISO instant written by the caller, never read from a clock
- * here, for `app/assembly/locking.py`'s reason: a module with a clock in it
- * cannot be tested without sleeping.
- */
-export interface ViewBookmark {
-  id: string;
-  name: string;
-  conversationId: string;
-  savedAt: string;
-  camera: CameraPose;
-  sections: SectionPlane[];
-  visibility: VisibilityState;
-  explodeFactor: number;
+  readonly origin: Vec3;
+  readonly normal: Vec3;
 }
 
 export interface ViewState {
-  camera: CameraPose;
-  sections: readonly SectionPlane[];
-  visibility: VisibilityState;
-  explodeFactor: number;
+  readonly sections: readonly SectionPlane[];
+  /** Occurrence paths the user hid explicitly. */
+  readonly hidden: readonly string[];
+  /** Subtree to show alone, or `null` for the whole machine. */
+  readonly isolated: string | null;
+  /** 0 is assembled; 1 moves each part one radius out along its own direction. */
+  readonly explode: number;
+}
+
+export function emptyView(): ViewState {
+  return { sections: [], hidden: [], isolated: null, explode: 0 };
+}
+
+function centre(box: Box): Vec3 {
+  return [
+    (box.min[0] + box.max[0]) / 2,
+    (box.min[1] + box.max[1]) / 2,
+    (box.min[2] + box.max[2]) / 2,
+  ];
+}
+
+/** Every one of a box's eight corners. Trap 2 depends on having all of them. */
+export function corners(box: Box): Vec3[] {
+  const out: Vec3[] = [];
+  for (const x of [box.min[0], box.max[0]]) {
+    for (const y of [box.min[1], box.max[1]]) {
+      for (const z of [box.min[2], box.max[2]]) {
+        out.push([x, y, z]);
+      }
+    }
+  }
+  return out;
+}
+
+function signedDistance(point: Vec3, plane: SectionPlane): number {
+  return (
+    (point[0] - plane.origin[0]) * plane.normal[0] +
+    (point[1] - plane.origin[1]) * plane.normal[1] +
+    (point[2] - plane.origin[2]) * plane.normal[2]
+  );
 }
 
 /**
- * Capture the current view as a bookmark.
+ * Whether a section plane removes this part entirely.
  *
- * Copies every array and object it stores. A bookmark holding a reference to
- * the live section-plane array is not a bookmark — dragging the slider would
- * silently rewrite the saved view, and the user would find out by restoring it.
+ * **Decided on the corners** (trap 2): a part is removed only when *every* corner is on
+ * the removed side. A long member running through the cut has corners on both sides and
+ * therefore survives — clipped by the renderer, which is where clipping belongs. Deciding
+ * from the centre would delete it from the very view it is meant to appear in.
  */
-export function bookmarkView(
-  state: ViewState,
-  { id, name, conversationId, savedAt }: Omit<ViewBookmark, keyof ViewState>,
-): ViewBookmark {
-  return {
-    id,
-    name,
-    conversationId,
-    savedAt,
-    camera: {
-      position: [...state.camera.position],
-      target: [...state.camera.target],
-      up: [...state.camera.up],
-    },
-    sections: state.sections.map((plane) => ({
-      normal: [...plane.normal] as Vec3,
-      offset: plane.offset,
-      enabled: plane.enabled,
-    })),
-    visibility: {
-      hiddenRoots: [...state.visibility.hiddenRoots],
-      isolatedRoot: state.visibility.isolatedRoot,
-    },
-    explodeFactor: state.explodeFactor,
-  };
+export function isCutAway(part: ViewerPart, plane: SectionPlane): boolean {
+  return corners(part.box).every((corner) => signedDistance(corner, plane) > 0);
 }
 
-/** The view a bookmark restores — copied out, for the reason above. */
-export function restoreView(bookmark: ViewBookmark): ViewState {
-  return bookmarkView(bookmark, {
-    id: bookmark.id,
-    name: bookmark.name,
-    conversationId: bookmark.conversationId,
-    savedAt: bookmark.savedAt,
+/** Whether `path` is `root` or sits beneath it. */
+export function isUnder(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+/**
+ * The parts a viewer should draw, in the order given.
+ *
+ * **Hide wins over isolate** (trap 4): a part the user hid stays hidden even inside the
+ * isolated subtree, because hiding is the more specific instruction and the user gave it
+ * last. And an `isolated` root that matches nothing shows **nothing** — falling back to
+ * the whole machine is the opposite of what "isolate" asked for, and it would look like
+ * the control had failed to do anything.
+ */
+export function visibleParts(
+  parts: readonly ViewerPart[],
+  state: ViewState,
+): ViewerPart[] {
+  const hidden = new Set(state.hidden);
+  return parts.filter((part) => {
+    if (hidden.has(part.path)) return false;
+    if (state.isolated !== null && !isUnder(part.path, state.isolated)) return false;
+    return !state.sections.some((plane) => isCutAway(part, plane));
   });
 }
 
 /**
- * The bookmarks belonging to one conversation, newest first.
+ * Where a part sits at the current explode factor.
  *
- * Scoped by conversation because that is what makes the name mean anything:
- * "the cracked corner" is the corner of the part *this* conversation is about.
- * Ties break on id so two renders of the same list agree.
+ * Each part moves outward along the direction from the assembly's centre to its own,
+ * scaled by the factor and by its own size — so a big part moves further than a small one
+ * and the machine opens rather than scattering.
+ *
+ * **Trap 3 is the guard at the top.** A component whose centre *is* the assembly's centre
+ * has a zero direction; normalising it gives `NaN`, a `NaN` translation puts the part
+ * nowhere, and nothing raises. On a symmetric machine that part is the main shaft — the
+ * one the exploded view exists to show. It stays put instead, which is the honest answer:
+ * there is no outward direction for a part at the centre.
  */
-export function bookmarksFor(
-  bookmarks: readonly ViewBookmark[],
-  conversationId: string,
-): ViewBookmark[] {
-  return bookmarks
-    .filter((one) => one.conversationId === conversationId)
-    .sort(
-      (a, b) => b.savedAt.localeCompare(a.savedAt) || a.id.localeCompare(b.id),
+export function explodedOffset(
+  part: ViewerPart,
+  assembly: Box,
+  explode: number,
+): Vec3 {
+  if (explode === 0) return [0, 0, 0];
+  const origin = centre(assembly);
+  const own = centre(part.box);
+  const direction: Vec3 = [own[0] - origin[0], own[1] - origin[1], own[2] - origin[2]];
+  const distance = Math.hypot(direction[0], direction[1], direction[2]);
+  if (distance === 0) return [0, 0, 0];
+  const radius = Math.hypot(
+    part.box.max[0] - part.box.min[0],
+    part.box.max[1] - part.box.min[1],
+    part.box.max[2] - part.box.min[2],
+  ) / 2;
+  const scale = (explode * radius) / distance;
+  return [direction[0] * scale, direction[1] * scale, direction[2] * scale];
+}
+
+/** A camera, as a bookmark stores it. */
+export interface CameraPose {
+  readonly positionMm: Vec3;
+  readonly targetMm: Vec3;
+  readonly upMm: Vec3;
+}
+
+/**
+ * A saved view. **Everything the user could see, not just where they stood.**
+ *
+ * The name is the user's; `takenAt` is an ISO instant so two bookmarks of the same view a
+ * week apart are distinguishable in a list.
+ */
+export interface Bookmark {
+  readonly name: string;
+  readonly takenAt: string;
+  readonly camera: CameraPose;
+  readonly view: ViewState;
+}
+
+function copyView(state: ViewState): ViewState {
+  return {
+    sections: state.sections.map((plane) => ({
+      origin: [...plane.origin] as unknown as Vec3,
+      normal: [...plane.normal] as unknown as Vec3,
+    })),
+    hidden: [...state.hidden],
+    isolated: state.isolated,
+    explode: state.explode,
+  };
+}
+
+/**
+ * Take a bookmark. **Deep copies**, so that dragging a slider afterwards cannot rewrite
+ * a view somebody saved — the bug a shallow copy produces is a bookmark that silently
+ * becomes whatever the user last did.
+ */
+export function bookmark(
+  name: string,
+  camera: CameraPose,
+  view: ViewState,
+  takenAt: string,
+): Bookmark {
+  return {
+    name,
+    takenAt,
+    camera: {
+      positionMm: [...camera.positionMm] as unknown as Vec3,
+      targetMm: [...camera.targetMm] as unknown as Vec3,
+      upMm: [...camera.upMm] as unknown as Vec3,
+    },
+    view: copyView(view),
+  };
+}
+
+/** Restore a bookmark. Deep copies for the same reason, in the other direction. */
+export function restore(saved: Bookmark): { camera: CameraPose; view: ViewState } {
+  return {
+    camera: {
+      positionMm: [...saved.camera.positionMm] as unknown as Vec3,
+      targetMm: [...saved.camera.targetMm] as unknown as Vec3,
+      upMm: [...saved.camera.upMm] as unknown as Vec3,
+    },
+    view: copyView(saved.view),
+  };
+}
+
+/**
+ * What the view is doing, for a status line.
+ *
+ * Counts rather than adjectives, for `offline-capability.ts`'s reason: "3 parts hidden" is
+ * checkable and "some parts hidden" is not, and a user who cannot see a part needs to
+ * know whether the viewer is hiding it or it is genuinely absent.
+ */
+export function describeView(state: ViewState, total: number, visible: number): string[] {
+  const notes: string[] = [];
+  if (state.sections.length > 0) {
+    notes.push(
+      `${state.sections.length} section plane${state.sections.length === 1 ? "" : "s"}`,
     );
+  }
+  if (state.isolated !== null) notes.push(`isolated to ${state.isolated}`);
+  if (state.hidden.length > 0) notes.push(`${state.hidden.length} hidden`);
+  if (state.explode > 0) notes.push(`exploded ${Math.round(state.explode * 100)}%`);
+  if (visible < total) notes.push(`showing ${visible} of ${total} parts`);
+  return notes;
 }

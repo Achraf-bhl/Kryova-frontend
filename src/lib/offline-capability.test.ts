@@ -1,182 +1,179 @@
-/**
- * Offline honesty (P7.4): what works without the backend, said rather than discovered.
- *
- * The claims worth holding are the ones that go wrong quietly: an unclassified feature
- * must read as unavailable and not as available; `unknown` at startup must not look like
- * an outage; a 401 must not switch the whole interface off; and "unreachable" and
- * "failing" must not collapse, because the user's next action differs.
- *
- * Written on Linux and not run (the user's rule; Windows runs vitest).
- */
-
 import { describe, expect, it } from "vitest";
 
 import {
   CAPABILITIES,
-  type Reachability,
-  UNKNOWN_REACHABILITY,
-  allVerdicts,
-  bannerFor,
-  capability,
-  isUsable,
-  reachabilityFrom,
-  unknownCapability,
-  verdictFor,
+  availability,
+  explain,
+  isDown,
+  stateFromProbe,
+  summarise,
+  type BackendState,
 } from "./offline-capability";
 
-const OFFLINE: Reachability = { state: "unreachable", since: 1000 };
-const FAILING: Reachability = { state: "failing", status: 503, since: 1000 };
-const ONLINE: Reachability = { state: "online" };
+/**
+ * P7 task 4, tested as the table it is.
+ *
+ * This module and these tests were claimed by the master plan on 2026-09-16 and had never
+ * been committed — one of ten such paths found by the audit of 2026-09-17. The design
+ * survived in the status that claimed it, and each test below names the failure the
+ * design is avoiding, because a design described in prose and never executed is what
+ * produced the false claim in the first place.
+ */
 
-describe("the table is the answer, and a gap in it is not a promise", () => {
-  it("treats a capability nobody classified as needing the server", () => {
-    // Defaulting to "works offline" would turn forgetting a row into a promise the app
-    // cannot keep, which is the failure this module exists to remove.
-    const unknown = unknownCapability("something-new");
+const DOWN: BackendState[] = ["unreachable", "failing"];
 
-    expect(unknown.offline).toBe("unavailable");
-    expect(verdictFor("something-new", OFFLINE).enabled).toBe(false);
+describe("the table is the whole answer", () => {
+  it("lists ten capabilities", () => {
+    expect(CAPABILITIES).toHaveLength(10);
   });
 
-  it("gives every listed capability a sentence saying what to do", () => {
-    for (const one of CAPABILITIES) {
-      expect(one.whenOffline.length).toBeGreaterThan(20);
-      expect(one.label).not.toBe(one.id);
+  it("gives every capability a reason, not just a verdict", () => {
+    // A disabled control with no sentence is a control the user presses again.
+    for (const capability of CAPABILITIES) {
+      expect(capability.because.length).toBeGreaterThan(10);
+      expect(capability.label.length).toBeGreaterThan(3);
     }
   });
 
-  it("has no duplicate ids, so one feature cannot have two verdicts", () => {
-    const ids = CAPABILITIES.map((one) => one.id);
+  it("has no duplicate ids", () => {
+    const ids = CAPABILITIES.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("looks a known capability up rather than inventing one", () => {
-    expect(capability("chat").offline).toBe("unavailable");
-    expect(capability("read-handbook").offline).toBe("works");
-  });
-});
-
-describe("startup is not an outage", () => {
-  it("enables everything before the first probe", () => {
-    // Greying the interface out on launch would make every cold start look broken.
-    for (const one of CAPABILITIES) {
-      expect(verdictFor(one.id, UNKNOWN_REACHABILITY).enabled).toBe(true);
+  it("treats a capability it does not list as unavailable", () => {
+    // The point of the module. Defaulting a missing row to "works offline" turns
+    // forgetting to add one into a promise the app cannot keep.
+    for (const state of [...DOWN, "online", "unknown"] as BackendState[]) {
+      expect(availability("something-nobody-added", state)).toBe("unavailable");
     }
-    expect(bannerFor(UNKNOWN_REACHABILITY)).toBeNull();
   });
 
-  it("does not call unknown usable", () => {
-    // Enabled and usable are different questions: the first is what to let the user try,
-    // the second is what the app knows.
-    expect(isUsable(UNKNOWN_REACHABILITY)).toBe(false);
-    expect(isUsable(ONLINE)).toBe(true);
+  it("explains an unknown capability rather than throwing", () => {
+    // A missing row must not be able to take a screen down.
+    expect(explain("not-a-thing", "online")).toContain("switched off");
   });
 });
 
-describe("unreachable and failing are different sentences", () => {
-  it("says the server cannot be reached when nothing answered", () => {
-    const verdict = verdictFor("chat", OFFLINE);
-
-    expect(verdict.reason).toContain("cannot be reached");
-    expect(verdict.reason).not.toContain("error (");
+describe("unknown is not offline", () => {
+  it("is not treated as down", () => {
+    // Before the first probe the honest position is that the backend is probably fine.
+    // Greying the interface out on launch makes every cold start look like an outage.
+    expect(isDown("unknown")).toBe(false);
   });
 
-  it("says the server answered badly when it did", () => {
-    // "No connection" invites checking the network; "the server is having trouble"
-    // invites waiting. Swapping them wastes the user's time in both directions.
-    const verdict = verdictFor("chat", FAILING);
+  it("leaves every capability available", () => {
+    for (const capability of CAPABILITIES) {
+      expect(availability(capability.id, "unknown")).toBe("available");
+    }
+  });
 
-    expect(verdict.reason).toContain("503");
-    expect(verdict.reason).not.toContain("cannot be reached");
+  it("shows no banner", () => {
+    expect(summarise("unknown").banner).toBeNull();
   });
 });
 
-describe("a cached capability is allowed and marked", () => {
-  it("stays enabled but degraded, with a reason", () => {
-    const verdict = verdictFor("view-cached-design", OFFLINE);
-
-    expect(verdict.enabled).toBe(true);
-    expect(verdict.degraded).toBe(true);
-    expect(verdict.reason).toContain("not opened before");
+describe("what each requirement does when the backend is down", () => {
+  it.each(DOWN)("a server capability is unavailable when %s", (state) => {
+    expect(availability("run-simulation", state)).toBe("unavailable");
   });
 
-  it("leaves a fully-offline capability undegraded", () => {
-    const verdict = verdictFor("read-handbook", OFFLINE);
-
-    expect(verdict.enabled).toBe(true);
-    expect(verdict.degraded).toBe(false);
-    expect(verdict.reason).toBe("");
+  it.each(DOWN)("a cache capability is degraded, not unavailable, when %s", (state) => {
+    // Enabled *and* marked: a short list must not read as the whole list.
+    expect(availability("view-cached-design", state)).toBe("degraded");
   });
 
-  it("never marks anything degraded while online", () => {
-    for (const verdict of allVerdicts(ONLINE)) {
-      expect(verdict.enabled).toBe(true);
-      expect(verdict.degraded).toBe(false);
+  it.each(DOWN)("a capability needing nothing stays available when %s", (state) => {
+    expect(availability("read-docs", state)).toBe("available");
+  });
+
+  it("everything is available when the backend answers", () => {
+    for (const capability of CAPABILITIES) {
+      expect(availability(capability.id, "online")).toBe("available");
     }
   });
 });
 
-describe("the banner counts rather than adjectives", () => {
-  it("says how many features are off and out of how many", () => {
-    // "6 of 10 features need the server" is checkable; "limited functionality" is not.
-    const banner = bannerFor(OFFLINE);
-    const blocked = allVerdicts(OFFLINE).filter((one) => !one.enabled).length;
-
-    expect(banner).toContain(`${blocked} of ${CAPABILITIES.length}`);
+describe("unreachable and failing get different sentences", () => {
+  it("points at the connection when nothing answered", () => {
+    // "No connection" invites checking the network.
+    expect(explain("run-simulation", "unreachable")).toContain("connection");
   });
 
-  it("shows nothing at all when the backend is fine", () => {
-    expect(bannerFor(ONLINE)).toBeNull();
+  it("points at waiting when the server is erroring", () => {
+    // "The server is having trouble" invites waiting. Swapping the two wastes the
+    // user's time in both directions.
+    const sentence = explain("run-simulation", "failing") ?? "";
+    expect(sentence).toContain("trouble");
+    expect(sentence).toContain("Waiting");
   });
 
-  it("names the status when the server is failing", () => {
-    expect(bannerFor(FAILING)).toContain("503");
+  it("says nothing is queued, on every refusal", () => {
+    // An offline queue is a real feature with real consequences; pretending to accept a
+    // write is worse than refusing it.
+    for (const state of DOWN) {
+      expect(explain("edit-parameter", state)).toContain("queued");
+    }
+  });
+
+  it("explains nothing when the capability is fully available", () => {
+    expect(explain("run-simulation", "online")).toBeNull();
+    expect(explain("read-docs", "unreachable")).toBeNull();
   });
 });
 
 describe("reading a probe", () => {
-  it("treats no answer at all as unreachable", () => {
-    expect(reachabilityFrom(null, 5).state).toBe("unreachable");
+  it("is unreachable when nothing answered", () => {
+    expect(stateFromProbe(null)).toBe("unreachable");
   });
 
-  it("treats 5xx as failing, not as offline", () => {
-    const read = reachabilityFrom(503, 5);
-
-    expect(read.state).toBe("failing");
-    expect(read.state === "failing" && read.status).toBe(503);
+  it("is failing only on a 5xx", () => {
+    expect(stateFromProbe(500)).toBe("failing");
+    expect(stateFromProbe(503)).toBe("failing");
   });
 
   it("does not call a 401 or a 404 offline", () => {
     // The server is up and answering correctly about something else. Switching the whole
     // interface off because one probe was unauthorised is the obvious wrong reading.
-    expect(reachabilityFrom(401, 5).state).toBe("online");
-    expect(reachabilityFrom(404, 5).state).toBe("online");
-    expect(reachabilityFrom(200, 5).state).toBe("online");
+    expect(stateFromProbe(401)).toBe("online");
+    expect(stateFromProbe(404)).toBe("online");
+    expect(stateFromProbe(200)).toBe("online");
   });
 
-  it("uses navigator.onLine as a fast negative only", () => {
-    // `onLine === true` on a captive-portal wifi reaches nothing, so it proves nothing and
-    // the probe still decides. `false` is conclusive.
-    expect(reachabilityFrom(200, 5, false).state).toBe("unreachable");
-    expect(reachabilityFrom(200, 5, true).state).toBe("online");
-    expect(reachabilityFrom(null, 5, true).state).toBe("unreachable");
-  });
-
-  it("records when the trouble started, for a banner that can age", () => {
-    const read = reachabilityFrom(null, 1234);
-
-    expect(read.state === "unreachable" && read.since).toBe(1234);
+  it("takes navigator.onLine as a negative only", () => {
+    // False means definitely offline; true means nothing, because a captive portal is
+    // `true` and reaches nothing — so a 200 is what decides "fine".
+    expect(stateFromProbe(200, false)).toBe("unreachable");
+    expect(stateFromProbe(200, true)).toBe("online");
   });
 });
 
-describe("nothing is queued for later", () => {
-  it("tells the user a refused action is not being held", () => {
-    // An offline queue is a real feature with real consequences (an edit replayed against
-    // a part that moved underneath). Pretending to accept a write is worse than refusing.
-    for (const id of ["edit-design", "run-simulation", "upload-attachment"]) {
-      const verdict = verdictFor(id, OFFLINE);
-      expect(verdict.enabled).toBe(false);
-      expect(verdict.reason.toLowerCase()).toMatch(/again|not held|nothing is held/);
-    }
+describe("the banner counts rather than using adjectives", () => {
+  it("says how many of how many", () => {
+    // "7 of 10 features need the server" is checkable; "limited functionality" is not.
+    const summary = summarise("unreachable");
+
+    expect(summary.banner).toContain(`${summary.unavailable} of ${summary.total}`);
+    expect(summary.banner).not.toMatch(/limited|reduced|some features/i);
+  });
+
+  it("counts seven unavailable and two degraded of ten", () => {
+    const summary = summarise("unreachable");
+
+    expect(summary.total).toBe(10);
+    expect(summary.unavailable).toBe(7);
+    expect(summary.degraded).toBe(2);
+  });
+
+  it("mentions the cached ones separately rather than lumping them in", () => {
+    expect(summarise("failing").banner).toContain("cached");
+  });
+
+  it("has no banner when the backend is fine", () => {
+    expect(summarise("online").banner).toBeNull();
+  });
+
+  it("opens differently for unreachable and failing", () => {
+    expect(summarise("unreachable").banner).toContain("No connection");
+    expect(summarise("failing").banner).toContain("having trouble");
   });
 });

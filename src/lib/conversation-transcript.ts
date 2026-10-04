@@ -22,6 +22,17 @@ export interface Turn {
     | "cancelled"
     | "needs_input"
     | "awaiting_approval";
+  /**
+   * A decision Kryova is waiting on, rendered in the thread rather than left as
+   * the last paragraph of the answer (2026-09-22).
+   *
+   * **Live-turn only, and that is deliberate rather than an omission.** The
+   * backend appends the same question to the assistant message, so a rebuilt
+   * transcript still carries it in `content` — the prose is the record and this
+   * is the surface. A reload past the ten-minute resume buffer therefore loses
+   * the buttons and never the question.
+   */
+  intervention?: import("@/lib/agent-stream").Intervention;
   /** Set when the turn ended in an error, so the UI can offer a retry. */
   error?: string;
 }

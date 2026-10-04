@@ -1,210 +1,232 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type BoundingBox,
+  COARSEST_LEVEL,
+  LEVEL_SCREEN_PX,
+  MIN_SCREEN_PX,
+  compareRequests,
+  isInFront,
+  levelFor,
+  plan,
+  screenSizePx,
+  wantedFor,
   type Camera,
-  DEFAULT_LOD,
-  MIN_PIXELS_FOR_A_MESH,
   type ScenePart,
-  isAhead,
-  lodFor,
-  planLoads,
-  priority,
-  radius,
-  screenHeightPx,
 } from "./scene-streaming";
 
 /**
- * Streaming order for a machine-scale assembly (master plan P6.2).
+ * P6 task 2's ordering, tested as arithmetic.
  *
- * The claims worth pinning are the ones where a plausible implementation is
- * quietly wrong rather than broken: a scene that thrashes when the camera backs
- * away, a viewer that spends its first second on fasteners, a cull that pops a
- * hole in the foreground, and a sort that is not total. None of those throws.
- *
- * Written on Linux and **not run** (the user's rule; Windows runs them).
+ * This file and the module beside it were claimed by the master plan on 2026-09-15 and
+ * had never existed — `git log --all` over the path was empty on 2026-09-17. The design
+ * survived in the status line that claimed them, and these tests hold the rebuild to it
+ * decision by decision, because a design described in prose and never executed is exactly
+ * what produced the false claim in the first place.
  */
 
-function bb(
-  min: [number, number, number],
-  max: [number, number, number],
-): BoundingBox {
-  return { min, max };
-}
-
-function box(x: number, size = 10): BoundingBox {
-  return bb([x, 0, 0], [x + size, size, size]);
-}
-
-const camera: Camera = {
-  position: [0, 5, 500],
-  direction: [0, 0, -1],
-  fovY: Math.PI / 4,
-  viewportHeightPx: 1000,
+const CAMERA: Camera = {
+  positionMm: [0, 0, 0],
+  directionMm: [0, 0, 1],
+  viewportPx: 1080,
+  fovRad: 1.0,
 };
 
-describe("geometry helpers", () => {
-  it("takes the radius as half the body diagonal", () => {
-    expect(radius(bb([0, 0, 0], [2, 0, 0]))).toBe(1);
+function partAt(path: string, z: number, radiusMm = 50, level: number | null = null): ScenePart {
+  return { path, centreMm: [0, 0, z], radiusMm, level };
+}
+
+describe("apparent size", () => {
+  it("halves when the distance doubles", () => {
+    const near = screenSizePx(partAt("a", 1000), CAMERA);
+    const far = screenSizePx(partAt("a", 2000), CAMERA);
+
+    expect(far).toBeCloseTo(near / 2, 6);
   });
 
-  it("reports a part containing the camera as infinitely large", () => {
-    const around: BoundingBox = bb([-1000, -1000, -1000], [1000, 1000, 1000]);
-
-    expect(screenHeightPx(camera, around)).toBe(Number.POSITIVE_INFINITY);
+  it("is infinite for a part containing the camera", () => {
+    // Not a clamped large number: it is the truthful answer, and the comparator is
+    // written to handle it. A part the camera is inside must load first.
+    expect(screenSizePx(partAt("inside", 10, 50), CAMERA)).toBe(Number.POSITIVE_INFINITY);
   });
 
-  it("a nearer part of the same size is larger on screen", () => {
-    const near = bb([0, 0, 0], [10, 10, 10]);
-    const far = bb([0, 0, -2000], [10, 10, -1990]);
+  it("grows with the viewport, because a ratio is not a size", () => {
+    const small = screenSizePx(partAt("a", 1000), { ...CAMERA, viewportPx: 540 });
+    const large = screenSizePx(partAt("a", 1000), { ...CAMERA, viewportPx: 1080 });
 
-    expect(screenHeightPx(camera, near)).toBeGreaterThan(screenHeightPx(camera, far));
+    expect(large).toBeCloseTo(small * 2, 6);
+  });
+
+  it("shrinks as the field of view widens", () => {
+    const narrow = screenSizePx(partAt("a", 1000), { ...CAMERA, fovRad: 0.5 });
+    const wide = screenSizePx(partAt("a", 1000), { ...CAMERA, fovRad: 1.0 });
+
+    expect(wide).toBeCloseTo(narrow / 2, 6);
   });
 });
 
-describe("what is behind the camera", () => {
-  it("culls a part well behind it", () => {
-    expect(isAhead(camera, bb([0, 0, 900], [10, 10, 910]))).toBe(false);
+describe("levels are in part radii, not millimetres", () => {
+  it("gives a nut and a weldment the same level at the same screen size", () => {
+    // Decision 1, and the failure it prevents: a millimetre threshold would load the
+    // weldment at its coarsest level from across the room and the nut at its finest from
+    // the same place. Here a 3 mm nut at 60 mm and a 2 m weldment at 40 m are the same
+    // fraction of the screen, so they deserve the same mesh.
+    const nut = partAt("nut", 60, 3);
+    const weldment = partAt("weldment", 40_000, 2_000);
+
+    expect(screenSizePx(nut, CAMERA)).toBeCloseTo(screenSizePx(weldment, CAMERA), 6);
+    expect(levelFor(screenSizePx(nut, CAMERA))).toBe(
+      levelFor(screenSizePx(weldment, CAMERA)),
+    );
+  });
+
+  it("earns each level at its own threshold", () => {
+    expect(levelFor(LEVEL_SCREEN_PX[0])).toBe(0);
+    expect(levelFor(LEVEL_SCREEN_PX[0] - 1)).toBe(1);
+    expect(levelFor(LEVEL_SCREEN_PX[1])).toBe(1);
+    expect(levelFor(LEVEL_SCREEN_PX[1] - 1)).toBe(COARSEST_LEVEL);
+  });
+
+  it("gives nothing at all below the cutoff", () => {
+    expect(levelFor(MIN_SCREEN_PX - 0.001)).toBeNull();
+    expect(levelFor(MIN_SCREEN_PX)).toBe(COARSEST_LEVEL);
+  });
+});
+
+describe("a part is never fetched at a worse level than it holds", () => {
+  it("leaves a part that is already finer than it deserves", () => {
+    // Decision 2. Flying away from a machine must never spend a round trip on a worse
+    // mesh, so the level a part holds is a high-water mark.
+    const far = partAt("held", 100_000, 50, 0);
+
+    expect(wantedFor(far, CAMERA)).toBeNull();
+  });
+
+  it("improves a part that is coarser than it deserves", () => {
+    const near = partAt("held", 500, 50, COARSEST_LEVEL);
+    const request = wantedFor(near, CAMERA);
+
+    expect(request).not.toBeNull();
+    expect(request?.level).toBeLessThan(COARSEST_LEVEL);
+  });
+
+  it("leaves a part already at the level it deserves", () => {
+    const part = partAt("held", 1000, 50);
+    const deserved = levelFor(screenSizePx(part, CAMERA));
+
+    expect(wantedFor({ ...part, level: deserved }, CAMERA)).toBeNull();
+  });
+
+  it("asks for nothing for a part under the cutoff, however coarse it is", () => {
+    expect(wantedFor(partAt("speck", 5_000_000, 50), CAMERA)).toBeNull();
+  });
+});
+
+describe("culling is a half-space, and says so", () => {
+  it("drops a part behind the camera", () => {
+    expect(isInFront(partAt("behind", -5000, 50), CAMERA)).toBe(false);
+    expect(wantedFor(partAt("behind", -5000, 50), CAMERA)).toBeNull();
   });
 
   it("keeps a part straddling the camera plane", () => {
-    /* Culling on the centre alone pops a hole in the foreground as you walk
-       into an assembly, which is exactly when a viewer must not flicker. */
-    const straddling: BoundingBox = bb([-50, -50, 450], [50, 50, 550]);
-
-    expect(isAhead(camera, straddling)).toBe(true);
+    // Its centre is behind and half of it is visible. Popping in as the camera creeps
+    // forward is worse than fetching a few parts early.
+    expect(isInFront(partAt("straddle", -10, 50), CAMERA)).toBe(true);
   });
 
-  it("orders anything in front above anything behind", () => {
-    const behind: ScenePart = { id: "behind", box: bb([0, 0, 900], [400, 400, 1300]) };
-    const ahead: ScenePart = { id: "ahead", box: box(0, 1) };
+  it("keeps a part outside the viewport but in front, and that is the stated cost", () => {
+    // Decision 4: no projection matrix here, so "off to the side" is not expressible.
+    const offToTheSide: ScenePart = {
+      path: "aside",
+      centreMm: [50_000, 0, 1000],
+      radiusMm: 50,
+      level: null,
+    };
 
-    expect(priority(camera, ahead)).toBeGreaterThan(priority(camera, behind));
-  });
-
-  it("gives a total order, so a sort is stable across passes", () => {
-    /* `Infinity - Infinity` is NaN, and a comparator returning NaN leaves the
-       order to the engine — which is a viewer that loads a different thing
-       first on every frame. */
-    const huge: ScenePart = { id: "a", box: bb([-1e4, -1e4, -1e4], [1e4, 1e4, 1e4]) };
-    const also: ScenePart = { id: "b", box: bb([-1e4, -1e4, -1e4], [1e4, 1e4, 1e4]) };
-
-    expect(priority(camera, huge) - priority(camera, also)).toBe(0);
+    expect(isInFront(offToTheSide, CAMERA)).toBe(true);
   });
 });
 
-describe("detail level", () => {
-  it("is measured in part radii, so one table serves a nut and a frame", () => {
-    /* A threshold in millimetres would load a 2 m weldment at its coarsest
-       level from across the room and a M6 nut at its finest. */
-    const nut = bb([0, 0, 0], [6, 6, 6]);
-    const frame = bb([0, 0, 0], [2000, 2000, 2000]);
-    const close: Camera = { ...camera, position: [0, 0, 0] };
+describe("the comparator is total", () => {
+  it("orders two parts containing the camera rather than returning NaN", () => {
+    // Decision 5, and the whole reason this is not written as `b.screenPx - a.screenPx`:
+    // `Infinity - Infinity` is NaN, and a NaN comparator leaves the order to the engine —
+    // a viewer that loads something different first on every frame.
+    const a = { path: "a", level: 0, screenPx: Number.POSITIVE_INFINITY };
+    const b = { path: "b", level: 0, screenPx: Number.POSITIVE_INFINITY };
 
-    expect(lodFor(close, nut)).toBe(lodFor(close, frame));
+    expect(compareRequests(a, b)).toBe(-1);
+    expect(compareRequests(b, a)).toBe(1);
+    expect(Number.isNaN(compareRequests(a, b))).toBe(false);
   });
 
-  it("gives the finest level up close and the coarsest far away", () => {
-    const part = bb([0, 0, 0], [10, 10, 10]);
-    const near: Camera = { ...camera, position: [5, 5, 20] };
-    const far: Camera = { ...camera, position: [5, 5, 5000] };
+  it("is antisymmetric and reflexive on equal sizes", () => {
+    const a = { path: "a", level: 1, screenPx: 100 };
+    const b = { path: "b", level: 1, screenPx: 100 };
 
-    expect(lodFor(near, part)).toBe(2);
-    expect(lodFor(far, part)).toBe(0);
+    expect(compareRequests(a, a)).toBe(0);
+    expect(compareRequests(a, b)).toBe(-compareRequests(b, a));
   });
 
-  it("does not divide by zero on a degenerate part", () => {
-    expect(lodFor(camera, bb([1, 1, 1], [1, 1, 1]))).toBe(0);
-  });
+  it("puts the bigger part first", () => {
+    const big = { path: "z", level: 0, screenPx: 900 };
+    const small = { path: "a", level: 2, screenPx: 9 };
 
-  it("switches at the stated thresholds", () => {
-    const part = bb([-1, -1, -1], [1, 1, 1]);
-    const r = radius(part);
-    const at = (radii: number): Camera => ({ ...camera, position: [0, 0, radii * r] });
-
-    expect(lodFor(at(DEFAULT_LOD.fine - 0.1), part)).toBe(2);
-    expect(lodFor(at(DEFAULT_LOD.fine + 0.1), part)).toBe(1);
-    expect(lodFor(at(DEFAULT_LOD.medium + 0.1), part)).toBe(0);
+    expect(compareRequests(big, small)).toBe(-1);
   });
 });
 
-describe("planning what to fetch", () => {
-  it("asks for the biggest thing on screen first", () => {
-    const parts: ScenePart[] = [
-      { id: "washer", box: bb([0, 0, 0], [3, 3, 1]) },
-      { id: "frame", box: bb([-200, -200, -50], [200, 200, 50]) },
-    ];
+describe("planning a whole scene", () => {
+  const scene: ScenePart[] = [
+    partAt("far", 100_000, 50),
+    partAt("near", 400, 50),
+    partAt("behind", -4000, 50),
+    partAt("middle", 4000, 50),
+  ];
 
-    expect(planLoads(camera, parts)[0].id).toBe("frame");
+  it("returns the visible parts biggest first", () => {
+    const order = plan(scene, CAMERA).map((request) => request.path);
+
+    expect(order[0]).toBe("near");
+    expect(order).not.toContain("behind");
   });
 
-  it("does not fetch a mesh for something too small to see", () => {
-    /* On an assembly this is most of the parts, and it is the difference
-       between streaming a machine and streaming its fasteners. */
-    const speck: ScenePart = { id: "speck", box: bb([0, 0, 0], [0.2, 0.2, 0.2]) };
+  it("is deterministic across repeated calls", () => {
+    // The property the whole module exists for: a viewer that reorders between frames
+    // loads a different part first every time and never finishes the important ones.
+    const first = plan(scene, CAMERA).map((r) => r.path);
+    const second = plan([...scene].reverse(), CAMERA).map((r) => r.path);
 
-    expect(planLoads(camera, [speck])).toEqual([]);
-    expect(screenHeightPx(camera, speck.box)).toBeLessThan(MIN_PIXELS_FOR_A_MESH);
+    expect(second).toEqual(first);
   });
 
-  it("plans nothing for a settled scene", () => {
-    const parts: ScenePart[] = [
-      { id: "frame", box: bb([-200, -200, -50], [200, 200, 50]), loaded: 2 },
-    ];
+  it("takes the best N rather than the first N found", () => {
+    const limited = plan(scene, CAMERA, 1);
 
-    expect(planLoads(camera, parts)).toEqual([]);
+    expect(limited).toHaveLength(1);
+    expect(limited[0].path).toBe("near");
   });
 
-  it("does not re-fetch a coarser mesh when the camera backs away", () => {
-    /* The thrash this module exists to avoid: flying away from a part must not
-       spend a round trip to replace a mesh already in memory with a worse one. */
-    const far: Camera = { ...camera, position: [0, 0, 100_000] };
-    const parts: ScenePart[] = [
-      { id: "frame", box: bb([-2000, -2000, -2000], [2000, 2000, 2000]), loaded: 2 },
-    ];
-
-    expect(planLoads(far, parts)).toEqual([]);
+  it("returns nothing for a limit of zero, rather than everything", () => {
+    expect(plan(scene, CAMERA, 0)).toEqual([]);
   });
 
-  it("does upgrade a part that has only a coarse mesh", () => {
-    const parts: ScenePart[] = [
-      { id: "frame", box: bb([-200, -200, -50], [200, 200, 50]), loaded: 0 },
-    ];
-
-    expect(planLoads(camera, parts)).toEqual([{ id: "frame", level: 2 }]);
+  it("returns an empty plan for an empty scene", () => {
+    expect(plan([], CAMERA)).toEqual([]);
   });
 
-  it("treats a part with no mesh as needing one", () => {
-    const parts: ScenePart[] = [
-      { id: "frame", box: bb([-200, -200, -50], [200, 200, 50]) },
-    ];
-
-    expect(planLoads(camera, parts)).toHaveLength(1);
-  });
-
-  it("honours the budget", () => {
-    const parts: ScenePart[] = Array.from({ length: 50 }, (_, index) => ({
-      id: `p${index}`,
-      box: bb([index * 20, 0, 0], [index * 20 + 15, 15, 15]),
+  it("drops most of a machine-scale scene, which is the point", () => {
+    // Decision 3 at scale: on an assembly, most parts are under eight pixels from any
+    // view that shows the whole machine, and not fetching them is the biggest single
+    // saving available.
+    const machine: ScenePart[] = Array.from({ length: 2000 }, (_, index) => ({
+      path: `machine/part_${index}`,
+      centreMm: [(index % 50) * 300, Math.floor(index / 50) * 300, 30_000],
+      radiusMm: 25,
+      level: null,
     }));
 
-    expect(planLoads(camera, parts, { budget: 5 })).toHaveLength(5);
-  });
+    const wanted = plan(machine, CAMERA);
 
-  it("breaks ties by id so two passes agree", () => {
-    const parts: ScenePart[] = [
-      { id: "b", box: bb([-100, -100, 0], [100, 100, 10]) },
-      { id: "a", box: bb([-100, -100, 0], [100, 100, 10]) },
-    ];
-
-    expect(planLoads(camera, parts).map((one) => one.id)).toEqual(["a", "b"]);
-  });
-
-  it("never asks for a part behind the camera", () => {
-    const parts: ScenePart[] = [
-      { id: "behind", box: bb([-400, -400, 900], [400, 400, 1300]) },
-    ];
-
-    expect(planLoads(camera, parts)).toEqual([]);
+    expect(wanted.length).toBeLessThan(machine.length / 2);
   });
 });

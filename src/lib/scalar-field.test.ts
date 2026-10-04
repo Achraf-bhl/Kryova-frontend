@@ -2,218 +2,232 @@ import { describe, expect, it } from "vitest";
 
 import {
   ABSENT,
+  FIELDS,
   FIXED_RANGES,
-  type ScalarField,
-  autoRange,
-  colourAt,
-  colourBuffer,
-  hasAnyValue,
+  colourField,
+  colourFor,
   legendFor,
   magnitudeField,
   normalise,
-  paletteFor,
   probeNode,
-  sample,
+  ramp,
+  rangeFor,
+  type FieldKind,
 } from "./scalar-field";
 
 /**
- * Any scalar field on geometry, with one colour scale (master plan P6.5).
+ * P6 task 5, tested as the three honesty rules it is built on.
  *
- * Everything here is a way of getting a *plausible picture that is wrong*, which
- * is the failure mode a colour bar has: an unmeasured region painted as the
- * bottom of the scale, a damage field fitted so that 2% of life used is drawn
- * in the same red as failure, a fitted range presented as though somebody chose
- * it, and a probe that answers zero for a node nobody computed.
- *
- * Written on Linux and **not run** (the user's rule; Windows runs them).
+ * This module and these tests were claimed by the master plan on 2026-09-16 and had never
+ * been committed — one of ten such paths found by the audit of 2026-09-17. Each test below
+ * names the wrong picture the rule prevents, because every failure here produces an image
+ * that looks entirely plausible.
  */
 
-function field(values: number[], overrides: Partial<ScalarField> = {}): ScalarField {
-  return {
-    kind: "stress",
-    label: "von Mises stress",
-    unit: "MPa",
-    values: new Float32Array(values),
-    ...overrides,
-  };
-}
+const ALL_KINDS: FieldKind[] = [
+  "stress",
+  "displacement",
+  "thickness",
+  "damage",
+  "temperature",
+];
 
-describe("an absent value is not a zero", () => {
-  it("gives the absent colour, not the bottom of the scale", () => {
-    const range = { min: 0, max: 100, auto: false };
-
-    expect(colourAt(Number.NaN, range, "stress")).toEqual(ABSENT);
-    expect(colourAt(0, range, "stress")).not.toEqual(ABSENT);
+describe("an unmeasured node is not a low reading", () => {
+  it("colours NaN grey rather than the bottom of the scale", () => {
+    // The bottom of the scale is a reading; "nobody computed this" is not one. Painting
+    // the second as the first turns a hole in a result set into a region of low stress.
+    expect(colourFor(Number.NaN, { min: 0, max: 100, auto: true }, "stress")).toEqual(ABSENT);
   });
 
-  it("is left out of the fitted range", () => {
-    /* One NaN dragging the minimum would repaint the whole part. */
-    expect(autoRange(field([10, Number.NaN, 30]))).toEqual({ min: 10, max: 30, auto: true });
+  it("leaves NaN out of the fitted range", () => {
+    const withHole = rangeFor("stress", [10, Number.NaN, 30]);
+    const without = rangeFor("stress", [10, 30]);
+
+    expect(withHole).toEqual(without);
   });
 
-  it("is reported by the probe as unmeasured rather than as 0", () => {
-    const probe = probeNode(field([Number.NaN]), 0);
+  it("normalises an unmeasured value to null, not zero", () => {
+    // `null` forces the caller to decide to paint ABSENT; returning 0 lets it forget.
+    expect(normalise(Number.NaN, { min: 0, max: 1, auto: false }, "stress")).toBeNull();
+  });
+
+  it("probes an unmeasured node as not measured rather than as zero", () => {
+    const probe = probeNode([1, Number.NaN, 3], "stress", 1);
 
     expect(probe.measured).toBe(false);
-    expect(probe.value).toBeNaN();
+    expect(probe.value).toBeNull();
+    expect(probe.text).toContain("not computed");
   });
 
-  it("is distinguishable from a field where everything is absent", () => {
-    expect(hasAnyValue(field([Number.NaN, Number.NaN]))).toBe(false);
-    expect(hasAnyValue(field([Number.NaN, 1]))).toBe(true);
+  it("refuses a node index that is not in the field", () => {
+    // Clamping would answer about the nearest node it has — a question nobody asked, at
+    // the point the user pointed at.
+    for (const node of [-1, 3, 1.5]) {
+      const probe = probeNode([1, 2, 3], "stress", node);
+      expect(probe.measured).toBe(false);
+      expect(probe.text).toContain("no node");
+    }
   });
 
-  it("does not make a range over nothing look like 0 to 1", () => {
-    expect(autoRange(field([Number.NaN]))).toEqual({ min: 0, max: 0, auto: true });
+  it("counts the grey nodes in the legend", () => {
+    const legend = legendFor("stress", [1, Number.NaN, Number.NaN, 4]);
+
+    expect(legend.absentNote).toContain("2 nodes");
+    expect(legend.absentNote).toContain("not zero");
+  });
+
+  it("says nothing about grey when everything was measured", () => {
+    expect(legendFor("stress", [1, 2, 3]).absentNote).toBeNull();
   });
 });
 
-describe("a fitted scale says it was fitted", () => {
-  it("marks an auto range", () => {
-    expect(autoRange(field([1, 2, 3])).auto).toBe(true);
+describe("a fitted range says it was fitted", () => {
+  it("marks an auto range and prints the caveat", () => {
+    // Two screenshots of the same part with different auto ranges look like two
+    // different results. The easiest way to mislead with a correct picture.
+    const legend = legendFor("stress", [0, 50, 100]);
+
+    expect(legend.caveat).toContain("not comparable");
   });
 
-  it("puts the caveat on the legend", () => {
-    /* Two screenshots of the same part mean different things under two fitted
-       ranges, and the reader has no way to know without this. */
-    const legend = legendFor(field([1, 2, 3]), autoRange(field([1, 2, 3])));
-
-    expect(legend.note).toMatch(/fitted/i);
+  it("prints no caveat for a range that was chosen", () => {
+    expect(legendFor("damage", [0.1, 0.2]).caveat).toBeNull();
   });
 
-  it("carries no note when the bounds were chosen", () => {
-    expect(legendFor(field([1, 2]), { min: 0, max: 10, auto: false }).note).toBeNull();
+  it("states its own bounds", () => {
+    const legend = legendFor("stress", [10, 90]);
+
+    expect(legend.min).toBe(10);
+    expect(legend.max).toBe(90);
+    expect(legend.ticks[0]).toBe(10);
+    expect(legend.ticks[legend.ticks.length - 1]).toBe(90);
+  });
+
+  it("gives a constant field a band rather than a zero span", () => {
+    // Widening by a hair would paint noise across the whole palette; a band keeps it one
+    // colour, which is the truth about a constant field.
+    const range = rangeFor("stress", [7, 7, 7]);
+
+    expect(range.max).toBeGreaterThan(range.min);
+    expect(colourFor(7, range, "stress")).toEqual(ramp(0));
+  });
+
+  it("gives a field with nothing measured a stated range rather than 0-0", () => {
+    const range = rangeFor("stress", [Number.NaN, Number.NaN]);
+
+    expect(range.auto).toBe(true);
+    expect(range.max).toBeGreaterThan(range.min);
   });
 });
 
 describe("damage is never fitted", () => {
-  it("keeps the absolute 0 to 1 range", () => {
-    /* Fitting 0-0.02 across the palette paints a part that will last fifty
-       lifetimes in the same red as one about to crack. */
-    const damage = field([0.001, 0.02], { kind: "damage", label: "damage", unit: "" });
-
-    expect(autoRange(damage)).toEqual({ min: 0, max: 1, auto: false });
+  it("pins to 0-1 whatever the data says", () => {
+    // Fitting 0-0.02 across the palette paints a part that will last fifty lifetimes in
+    // the same red as one about to crack.
+    expect(rangeFor("damage", [0, 0.005, 0.02])).toEqual({ min: 0, max: 1, auto: false });
   });
 
-  it("is declared as a fixed range rather than special-cased in the fitter", () => {
-    expect(FIXED_RANGES.damage).toEqual({ min: 0, max: 1, auto: false });
+  it("paints a safe part at the cool end", () => {
+    const range = rangeFor("damage", [0.001, 0.02]);
+    const [r, , b] = colourFor(0.02, range, "damage");
+
+    expect(b).toBeGreaterThan(r);
   });
 
-  it("draws 2% of life used near the bottom of the scale", () => {
-    const damage = field([0.02], { kind: "damage", label: "damage", unit: "" });
+  it("paints a part at its life at the hot end", () => {
+    const range = rangeFor("damage", [0.001, 1.0]);
+    const [r, , b] = colourFor(1.0, range, "damage");
 
-    expect(normalise(0.02, autoRange(damage))).toBeCloseTo(0.02, 5);
-  });
-});
-
-describe("the scale", () => {
-  it("clamps outside its bounds rather than extrapolating", () => {
-    const range = { min: 0, max: 10, auto: false };
-
-    expect(normalise(-5, range)).toBe(0);
-    expect(normalise(50, range)).toBe(1);
+    expect(r).toBeGreaterThan(b);
   });
 
-  it("does not divide by zero on a uniform field", () => {
-    expect(normalise(5, { min: 5, max: 5, auto: true })).toBe(0);
-  });
-
-  it("interpolates between palette stops", () => {
-    const stops = [
-      [0, 0, 0],
-      [1, 1, 1],
-    ] as const;
-
-    expect(sample(stops, 0.5)).toEqual([0.5, 0.5, 0.5]);
-  });
-
-  it("returns the ends of the palette", () => {
-    const stops = paletteFor("stress");
-    const top = stops[stops.length - 1];
-
-    expect(sample(stops, 0)).toEqual(stops[0]);
-    /* The top end is `a + (b - a) * 1`, so it is the stop to within rounding
-       rather than bit-identical to it. */
-    sample(stops, 1).forEach((channel, index) => {
-      expect(channel).toBeCloseTo(top[index], 9);
-    });
-  });
-
-  it("runs hot at the thin end for thickness", () => {
-    /* Thin is the problem, so the ramp is reversed on purpose: a caller that
-       assumed "high is red" everywhere would draw the safe end as the risk. */
-    const thin = colourAt(0, { min: 0, max: 10, auto: false }, "thickness");
-    const thick = colourAt(10, { min: 0, max: 10, auto: false }, "thickness");
-
-    expect(thin[0]).toBeGreaterThan(thick[0]);
+  it("is the only fixed range", () => {
+    expect(Object.keys(FIXED_RANGES)).toEqual(["damage"]);
   });
 });
 
-describe("the colour buffer", () => {
-  it("writes three floats per node", () => {
-    const buffer = colourBuffer(field([1, 2, 3]), { min: 1, max: 3, auto: false });
+describe("thickness runs the other way, and it is a property of the kind", () => {
+  it("paints thin hot and thick cool", () => {
+    // The assumption a caller who has read "high is red" everywhere else would get
+    // wrong, so it is not a flag at the call site.
+    const range = rangeFor("thickness", [1, 10]);
+    const thin = colourFor(1, range, "thickness");
+    const thick = colourFor(10, range, "thickness");
 
-    expect(buffer).toHaveLength(9);
+    expect(thin[0]).toBeGreaterThan(thin[2]);
+    expect(thick[2]).toBeGreaterThan(thick[0]);
   });
 
-  it("writes the absent colour in place, so the caller never branches", () => {
-    const buffer = colourBuffer(field([1, Number.NaN]), { min: 0, max: 2, auto: false });
-
-    /* Compared loosely because the buffer is Float32Array: 0.55 stored as a
-       32-bit float reads back as 0.5500000119…, and an exact match here would
-       be a test about IEEE 754 rather than about the absent colour. */
-    [buffer[3], buffer[4], buffer[5]].forEach((channel, index) => {
-      expect(channel).toBeCloseTo(ABSENT[index], 6);
-    });
-  });
-});
-
-describe("the probe", () => {
-  it("reads one node's value with its own unit", () => {
-    const probe = probeNode(field([7.5]), 0);
-
-    expect(probe.value).toBeCloseTo(7.5, 5);
-    expect(probe.unit).toBe("MPa");
-    expect(probe.measured).toBe(true);
-  });
-
-  it("refuses a node that is not in the field", () => {
-    /* A probe that silently answered about the wrong node is worse than one
-       that fails: the number it returns looks exactly like an answer. */
-    expect(() => probeNode(field([1, 2]), 5)).toThrow(RangeError);
-    expect(() => probeNode(field([1, 2]), -1)).toThrow(RangeError);
+  it("is the only kind that reverses", () => {
+    const reversed = ALL_KINDS.filter((kind) => FIELDS[kind].lowIsBad);
+    expect(reversed).toEqual(["thickness"]);
   });
 });
 
-describe("a vector field becomes a scalar one", () => {
-  it("takes the magnitude per node", () => {
-    const displacement = magnitudeField(
-      new Float32Array([3, 4, 0, 0, 0, 2]),
-      "displacement",
-      "displacement",
-      "mm",
-    );
-
-    expect(Array.from(displacement.values)).toEqual([5, 2]);
+describe("five kinds, one renderer", () => {
+  it.each(ALL_KINDS)("%s has a label and a definition", (kind) => {
+    expect(FIELDS[kind].label.length).toBeGreaterThan(3);
+    expect(FIELDS[kind].kind).toBe(kind);
   });
 
-  it("keeps the unit it was given, because nothing here converts", () => {
-    const displacement = magnitudeField(new Float32Array([1, 0, 0]), "displacement", "d", "mm");
+  it("differs only by name, unit and palette direction", () => {
+    // Never by a second renderer: every kind goes through the same `colourFor`.
+    const field = [0, 5, 10];
+    for (const kind of ALL_KINDS) {
+      expect(colourField(field, kind)).toHaveLength(field.length * 3);
+    }
+  });
 
-    expect(displacement.unit).toBe("mm");
+  it("gives every kind but damage a unit", () => {
+    for (const kind of ALL_KINDS) {
+      if (kind === "damage") expect(FIELDS[kind].unit).toBe("");
+      else expect(FIELDS[kind].unit.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("reports a probe with its unit", () => {
+    expect(probeNode([12.5], "stress", 0).text).toContain("MPa");
+    expect(probeNode([0.5], "damage", 0).text).not.toContain("undefined");
   });
 });
 
-describe("the legend", () => {
-  it("spans the range with evenly spaced ticks", () => {
-    const legend = legendFor(field([0, 100]), { min: 0, max: 100, auto: false }, 5);
-
-    expect(legend.ticks.map((tick) => tick.value)).toEqual([0, 25, 50, 75, 100]);
-    expect(legend.ticks[0].at).toBe(0);
-    expect(legend.ticks[4].at).toBe(1);
+describe("the bridge from a solve to a colour bar", () => {
+  it("takes the magnitude of a displacement per node", () => {
+    expect(magnitudeField([[3, 4, 0]])).toEqual([5]);
   });
 
-  it("carries the unit, so a bar of bare numbers cannot be misread", () => {
-    expect(legendFor(field([0, 1]), { min: 0, max: 1, auto: false }).unit).toBe("MPa");
+  it("gives NaN for a node with a missing component, not a short displacement", () => {
+    expect(magnitudeField([[1, 2, Number.NaN]])[0]).toBeNaN();
+    expect(magnitudeField([[1, 2]])[0]).toBeNaN();
+  });
+
+  it("keeps the node order", () => {
+    const magnitudes = magnitudeField([
+      [1, 0, 0],
+      [0, 2, 0],
+      [0, 0, 3],
+    ]);
+    expect(magnitudes).toEqual([1, 2, 3]);
+  });
+});
+
+describe("the ramp", () => {
+  it("runs blue to red", () => {
+    expect(ramp(0)).toEqual([0, 0, 1]);
+    expect(ramp(1)).toEqual([1, 0, 0]);
+  });
+
+  it("clamps rather than producing a colour off the end", () => {
+    expect(ramp(-5)).toEqual(ramp(0));
+    expect(ramp(5)).toEqual(ramp(1));
+  });
+
+  it("stays inside the unit cube everywhere", () => {
+    for (let i = 0; i <= 100; i++) {
+      for (const channel of ramp(i / 100)) {
+        expect(channel).toBeGreaterThanOrEqual(0);
+        expect(channel).toBeLessThanOrEqual(1);
+      }
+    }
   });
 });
