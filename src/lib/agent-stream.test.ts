@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { __resetRefreshState } from "./api-client";
 import { streamAgent } from "./agent-stream";
+import { RateLimitedError } from "./rate-limit";
 
 /**
  * The chat transport's session handling.
@@ -106,6 +107,49 @@ describe("streamAgent session handling", () => {
     await expect(streamAgent({ message: "hi" } as never, () => {})).rejects.toThrow(
       "load_case is invalid",
     );
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("streamAgent when the chat is rate-limited (ROAD_TO_10 3.2)", () => {
+  function limited(retryAfter: string | null) {
+    const headers = new Headers();
+    if (retryAfter !== null) headers.set("Retry-After", retryAfter);
+    return {
+      ok: false,
+      status: 429,
+      headers,
+      json: async () => ({ detail: "Too many requests. This limit is 20 per 60 seconds." }),
+    };
+  }
+
+  it("throws an error that carries the wait, worded for sending", async () => {
+    mockFetch.mockResolvedValueOnce(limited("12"));
+
+    const error = await streamAgent({ message: "hi" } as never, () => {}).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RateLimitedError);
+    expect((error as RateLimitedError).retryAfterSeconds).toBe(12);
+    expect((error as RateLimitedError).message).toBe(
+      "Too many requests. This limit is 20 per 60 seconds. You can send again in 12 s.",
+    );
+  });
+
+  it("carries no wait when the server named none", async () => {
+    mockFetch.mockResolvedValueOnce(limited(null));
+
+    const error = await streamAgent({ message: "hi" } as never, () => {}).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RateLimitedError);
+    expect((error as RateLimitedError).retryAfterSeconds).toBeNull();
+  });
+
+  it("does not retry a 429", async () => {
+    mockFetch.mockResolvedValueOnce(limited("1"));
+
+    await streamAgent({ message: "hi" } as never, () => {}).catch(() => {});
+
+    // Retrying a refusal is the tight loop the header exists to prevent.
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

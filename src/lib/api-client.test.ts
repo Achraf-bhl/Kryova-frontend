@@ -351,3 +351,43 @@ describe("project memory calls (ROAD_TO_10 2.7)", () => {
     });
   });
 });
+
+describe("a rate-limited answer (ROAD_TO_10 3.2)", () => {
+  function limited(retryAfter: string | null, detail = "Too many requests. This limit is 20 per 60 seconds.") {
+    const headers = new Headers();
+    if (retryAfter !== null) headers.set("Retry-After", retryAfter);
+    return { ok: false, status: 429, headers, json: async () => ({ detail }) };
+  }
+
+  it("says when to come back, in the server's own sentence plus the wait", async () => {
+    mockFetch.mockResolvedValueOnce(limited("12"));
+
+    await expect(api.listProjects()).rejects.toMatchObject({
+      status: 429,
+      message: "Too many requests. This limit is 20 per 60 seconds. You can try again in 12 s.",
+      retryAfterSeconds: 12,
+    });
+  });
+
+  it("states no wait for a 429 that is not about time", async () => {
+    mockFetch.mockResolvedValueOnce(
+      limited(null, "You already have 3 simulation(s) queued or running, which is the limit of 3."),
+    );
+
+    await expect(api.listProjects()).rejects.toMatchObject({
+      status: 429,
+      message: "You already have 3 simulation(s) queued or running, which is the limit of 3.",
+      retryAfterSeconds: null,
+    });
+  });
+
+  it("does not add a wait to any other error", async () => {
+    mockFetch.mockResolvedValueOnce(fail(409, "That fact is already held."));
+
+    await expect(api.listProjects()).rejects.toMatchObject({
+      status: 409,
+      message: "That fact is already held.",
+      retryAfterSeconds: null,
+    });
+  });
+});

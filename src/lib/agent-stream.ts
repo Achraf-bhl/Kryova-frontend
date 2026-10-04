@@ -6,6 +6,7 @@
  */
 
 import { fetchWithRefresh } from "@/lib/api-client";
+import { RateLimitedError, rateLimitMessage, retryAfterSeconds } from "@/lib/rate-limit";
 
 /**
  * One answer the user can give by pressing something.
@@ -282,6 +283,12 @@ export async function streamAgent(
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as { detail?: string };
+    if (response.status === 429) {
+      // The wait travels on the error so the composer can count down to it, rather than
+      // leaving a number on screen that stopped being true some seconds ago.
+      const wait = retryAfterSeconds(response.headers);
+      throw new RateLimitedError(rateLimitMessage(body.detail, wait, "send"), wait);
+    }
     throw new Error(body.detail ?? `Agent request failed with ${response.status}`);
   }
   if (!response.body) throw new Error("The agent returned no stream.");

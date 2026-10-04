@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentProgress, StepView } from "@/components/agent-step-list";
 import { ApiError, api } from "@/lib/api-client";
 import { dropLastExchange } from "@/lib/conversation-transcript";
+import { RateLimitedError } from "@/lib/rate-limit";
 import type { Turn } from "@/lib/conversation-transcript";
 import {
   resumeAgent,
@@ -70,6 +71,13 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const [turns, setTurns] = useState<Turn[]>(() => initialTurns ?? []);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * When the server says sending is allowed again (epoch ms), after a rate-limited send.
+   * A moment rather than a number of seconds, so the countdown beside the composer stays
+   * true however long the page sat there: "12 s" left on screen for three minutes is a
+   * small lie, and a timestamp cannot become one.
+   */
+  const [retryAt, setRetryAt] = useState<number | null>(null);
   const [allowMutations, setAllowMutations] = useState(defaultAllowMutations);
   const [liveSteps, setLiveSteps] = useState<StepView[]>([]);
   /**
@@ -389,6 +397,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const run = useCallback(
     async (request: Pick<ChatRequest, "message" | "continuation">) => {
       setError(null);
+      setRetryAt(null);
       answeredRef.current = false;
       setLastRequest(request);
       // A Continue under an answer that is about to be continued would resume
@@ -464,6 +473,13 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ),
           );
           settleSteps({ error: "You stopped this run." });
+        } else if (err instanceof RateLimitedError) {
+          // Refused before anything started, so there is no turn to rejoin: the resume
+          // below is for a connection that dropped under a turn already running.
+          const detail = err.message;
+          setError(detail);
+          settleSteps({ error: detail });
+          if (err.retryAfterSeconds !== null) setRetryAt(Date.now() + err.retryAfterSeconds * 1000);
         } else if (conversationIdRef.current && !answeredRef.current) {
           // The connection dropped on a turn that is very likely still running
           // on the server — the agent loop does not care that nobody is
@@ -633,6 +649,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     turns,
     busy,
     error,
+    retryAt,
     /** True when there is a failed turn that `retry` would re-run. */
     canRetry: !busy && error !== null && lastRequest !== null,
     allowMutations,

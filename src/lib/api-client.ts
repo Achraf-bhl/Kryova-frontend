@@ -52,6 +52,7 @@ import type {
   UserRead,
   VerificationStatus,
 } from "@/types/api";
+import { rateLimitMessage, retryAfterSeconds } from "@/lib/rate-limit";
 import type { CatiaDevice, CatiaDeviceCreated, CatiaStatus } from "@/types/catia";
 import type {
   BranchResult,
@@ -119,9 +120,16 @@ export const API_BASE_URL = BASE_URL;
 
 class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /**
+   * Seconds until the server says to try again, on a 429 that names a time. `null`
+   * for every other error and for a 429 that is not about time ("you already have three
+   * runs going").
+   */
+  retryAfterSeconds: number | null;
+  constructor(status: number, message: string, retryAfterSeconds: number | null = null) {
     super(message);
     this.status = status;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -215,6 +223,12 @@ function withFreshCsrf(init: RequestInit): RequestInit {
 
 async function failFromResponse(response: Response, fallback: string): Promise<never> {
   const body = (await response.json().catch(() => ({}))) as { detail?: string };
+  if (response.status === 429) {
+    // A limit says when to come back, in the server's own sentence plus the wait: a bare
+    // "Too many requests" is an error the person cannot act on (ROAD_TO_10 3.2).
+    const wait = retryAfterSeconds(response.headers);
+    throw new ApiError(429, rateLimitMessage(body.detail ?? fallback, wait), wait);
+  }
   throw new ApiError(response.status, body.detail ?? fallback);
 }
 

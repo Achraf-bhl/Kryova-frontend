@@ -17,6 +17,7 @@ import {
   RewindActions,
   RewindRefusal,
 } from "@/components/chat/message-actions";
+import { RateLimitNotice } from "@/components/chat/rate-limit-notice";
 import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
 import { AttachmentPanel } from "@/components/attachments/attachment-panel";
@@ -155,6 +156,7 @@ export function ChatView({
     turns,
     busy,
     error,
+    retryAt,
     canRetry,
     allowMutations,
     setAllowMutations,
@@ -629,6 +631,8 @@ export function ChatView({
               />
             </div>
           )}
+          {/* Counts down to the moment the server said sending is allowed again. */}
+          {retryAt !== null && <RateLimitNotice key={retryAt} retryAt={retryAt} />}
           <Composer
             value={input}
             onChange={setInput}
