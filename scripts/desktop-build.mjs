@@ -37,9 +37,20 @@ const env = {
   KRYOVA_FRONTEND_DIR: process.env.KRYOVA_FRONTEND_DIR ?? frontendDir,
   KRYOVA_BACKEND_DIR: backendDir,
   KRYOVA_NODE: process.env.KRYOVA_NODE ?? process.execPath,
+  // Inlined into the client bundle by `npm run build` (tauri's beforeBuildCommand
+  // inherits this environment). Without it the bundle falls back to a `localhost`
+  // default, and the window — served from 127.0.0.1 — would then call a different
+  // host than the one it was loaded from: an IPv6 miss at best, and at worst a
+  // cross-site request that drops the session cookie.
+  NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000/api/v1",
 };
 
-for (const key of ["KRYOVA_FRONTEND_DIR", "KRYOVA_BACKEND_DIR", "KRYOVA_NODE"]) {
+for (const key of [
+  "KRYOVA_FRONTEND_DIR",
+  "KRYOVA_BACKEND_DIR",
+  "KRYOVA_NODE",
+  "NEXT_PUBLIC_API_URL",
+]) {
   console.log(`  ${key} = ${env[key]}`);
 }
 

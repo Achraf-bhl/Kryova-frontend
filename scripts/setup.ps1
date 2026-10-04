@@ -39,8 +39,8 @@ if ($LASTEXITCODE -ne 0) { exit 1 }
 
 if (-not (Test-Path ".env.local")) {
     Write-Host ""
-    $apiUrl = Read-Host "Enter the backend API URL [http://localhost:8000/api/v1]"
-    if (-not $apiUrl) { $apiUrl = "http://localhost:8000/api/v1" }
+    $apiUrl = Read-Host "Enter the backend API URL [http://127.0.0.1:8000/api/v1]"
+    if (-not $apiUrl) { $apiUrl = "http://127.0.0.1:8000/api/v1" }
     "NEXT_PUBLIC_API_URL=$apiUrl" | Out-File -FilePath ".env.local" -Encoding utf8NoBOM
     Write-Host "✅ Created .env.local" -ForegroundColor Green
 }
@@ -59,4 +59,4 @@ Write-Host "To start the app:"
 Write-Host "  npm run dev        (development)"
 Write-Host "  npm start          (production, after build)"
 Write-Host ""
-Write-Host "Open http://localhost:3000 in your browser."
+Write-Host "Open http://127.0.0.1:3000 in your browser (not localhost: it resolves to ::1 first, and the backend listens on IPv4 only)."

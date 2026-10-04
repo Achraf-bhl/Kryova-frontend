@@ -16,6 +16,8 @@ use std::time::{Duration, Instant};
 
 use tauri::{Manager, RunEvent};
 
+mod logs;
+
 const BACKEND_PORT: u16 = 8000;
 const FRONTEND_PORT: u16 = 3000;
 
@@ -30,8 +32,15 @@ struct Servers(Mutex<Vec<Child>>);
 
 /// Where the backend lives. Overridable so a desktop build can point at a
 /// remote deployment instead of a local one.
+///
+/// The numeric address, never `localhost`: WebView2 is Chromium, which resolves
+/// `localhost` to `::1` first, and uvicorn is started below on `127.0.0.1` only,
+/// so the window loads and every API call then fails with a bare "Failed to
+/// fetch". Measured in a browser on the Windows seat (CLAUDE.md, *Driving the
+/// GUI* 2a); the installed app is not yet re-measured, which is why this is
+/// recorded as unverified on the seat.
 fn api_base_url() -> String {
-    std::env::var("KRYOVA_API_URL").unwrap_or_else(|_| "http://localhost:8000/api/v1".into())
+    std::env::var("KRYOVA_API_URL").unwrap_or_else(|_| format!("http://127.0.0.1:{BACKEND_PORT}/api/v1"))
 }
 
 #[tauri::command]
@@ -110,25 +119,22 @@ fn spawn(mut command: Command, log_name: &str) -> Option<Child> {
 /// redirect, which sends every line they write to the void. That is fine right
 /// up until something breaks: the backend logs its tracebacks to stdout, and
 /// when a user asks "what went wrong", the honest answer was that nothing had
-/// been kept. Each process gets its own file, truncated per launch so the
-/// newest run is the whole file rather than the tail of a year of them.
+/// been kept. Each process gets its own file.
+///
+/// **Rotated, not truncated** (`logs.rs`). Every launch used to start the file
+/// afresh, so relaunching to see whether a crash was a one-off erased the only
+/// record of it. The last five launches are kept beside the current one.
 fn log_dir() -> Option<PathBuf> {
-    let base = std::env::var("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .ok()
-        .or_else(|| dirs_home().map(|home| home.join("AppData").join("Local")))?;
-    let dir = base.join("Kryova").join("logs");
+    let dir = logs::log_dir_from(|key| std::env::var(key).ok(), std::env::consts::OS)?;
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }
 
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var("USERPROFILE").map(PathBuf::from).ok()
-}
-
 fn log_targets(name: &str) -> Option<(std::fs::File, std::fs::File)> {
-    let path = log_dir()?.join(format!("{name}.log"));
-    let file = std::fs::File::create(path).ok()?;
+    let dir = log_dir()?;
+    // Best effort: a failed rotation must never be the reason a window does not open.
+    let _ = logs::rotate(&dir, name, logs::KEEP_PREVIOUS);
+    let file = std::fs::File::create(dir.join(format!("{name}.log"))).ok()?;
     let clone = file.try_clone().ok()?;
     Some((file, clone))
 }
@@ -183,7 +189,21 @@ fn start_frontend() -> Option<Child> {
         .arg(next_bin)
         .arg("start")
         .arg("-p")
-        .arg(&port);
+        .arg(&port)
+        // Loopback only. `next start` listens on every interface by default, so without this
+        // anything on the LAN could reach the shell's own server, including the diagnostics
+        // route below. 127.0.0.1 rather than `localhost` for the usual reason: Chromium
+        // resolves `localhost` to ::1 and the rest of the stack is IPv4.
+        .arg("-H")
+        .arg("127.0.0.1")
+        // The setup page's "Copy diagnostics" reads these logs through the Next server
+        // (`src/app/api/diagnostics`), which stays up when the backend does not. Both
+        // variables are the opt-in: the route answers 404 without them, so a web
+        // deployment never serves its host's files.
+        .env("KRYOVA_DESKTOP", "1");
+    if let Some(dir) = log_dir() {
+        command.env("KRYOVA_LOG_DIR", dir);
+    }
     spawn(command, "frontend")
 }
 
@@ -242,7 +262,7 @@ pub fn run() {
                     // The webview was created before the server was listening,
                     // so its first load failed; point it at the live server.
                     if ready {
-                        if let Ok(url) = format!("http://localhost:{FRONTEND_PORT}").parse() {
+                        if let Ok(url) = format!("http://127.0.0.1:{FRONTEND_PORT}").parse() {
                             let _ = window.navigate(url);
                         }
                     }

@@ -35,8 +35,8 @@ npm install
 
 if [ ! -f ".env.local" ]; then
   echo ""
-  read -rp "Enter the backend API URL [http://localhost:8000/api/v1]: " API_URL
-  API_URL="${API_URL:-http://localhost:8000/api/v1}"
+  read -rp "Enter the backend API URL [http://127.0.0.1:8000/api/v1]: " API_URL
+  API_URL="${API_URL:-http://127.0.0.1:8000/api/v1}"
   echo "NEXT_PUBLIC_API_URL=${API_URL}" > .env.local
   echo "✅ Created .env.local"
 fi
@@ -54,4 +54,4 @@ echo "To start the app:"
 echo "  npm run dev        (development)"
 echo "  npm start          (production, after build)"
 echo ""
-echo "Open http://localhost:3000 in your browser."
+echo "Open http://127.0.0.1:3000 in your browser (not localhost: it resolves to ::1 first, and the backend listens on IPv4 only)."

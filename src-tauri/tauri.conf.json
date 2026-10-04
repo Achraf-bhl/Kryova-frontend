@@ -5,9 +5,9 @@
   "identifier": "com.kryova.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:3000",
+    "devUrl": "http://127.0.0.1:3000",
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "http://localhost:3000"
+    "frontendDist": "http://127.0.0.1:3000"
   },
   "app": {
     "windows": [
@@ -24,7 +24,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://localhost:3000 http://localhost:8000 http://localhost:11434"
+      "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:3000 http://127.0.0.1:8000"
     }
   },
   "bundle": {

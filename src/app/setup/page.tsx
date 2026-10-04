@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { CopyDiagnostics } from "@/components/setup/copy-diagnostics";
 import { detectPlatform, runHealthChecks, type HealthCheckResult, type Platform } from "@/lib/system";
 
 const PLATFORM_LABELS: Record<Platform, string> = {
@@ -129,6 +130,12 @@ export default function SetupPage() {
                 </Link>
               </>
             )}
+          </div>
+        )}
+
+        {!running && checks && (
+          <div className="mt-4 border-t border-border pt-4">
+            <CopyDiagnostics checks={checks} platform={platform} />
           </div>
         )}
       </div>
