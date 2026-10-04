@@ -695,6 +695,25 @@ export interface FailureClass {
   count: number;
 }
 
+/** The prompt-cache hit rate of the agent's turns (ROAD_TO_10 1.11). Every rate is
+ * **null, not 0**, when there is nothing to divide by or too few turns to compare —
+ * "not measured" and "the cache is missing" are opposite states. */
+export interface AiCacheHealth {
+  turns: number;
+  prompt_tokens: number;
+  cached_prompt_tokens: number;
+  /** Token-weighted over the whole window. */
+  hit_rate: number | null;
+  recent_turns: number;
+  /** Over the newest turns; null when there are too few to say. */
+  recent_hit_rate: number | null;
+  /** False when no turn recorded a cached count: the provider does not say, and the
+   * rate means nothing here. */
+  reported: boolean;
+  /** The sentence to show when the recent turns fell well below the earlier ones. */
+  alert: string | null;
+}
+
 export interface FleetHealth {
   window_hours: number;
   queue_depth: Record<string, number>;
@@ -713,6 +732,7 @@ export interface FleetHealth {
   users_awaiting_deletion: number;
   mail_delivers: boolean;
   maintenance_active: boolean;
+  ai_cache: AiCacheHealth;
 }
 
 // ---------------------------------------------------------------------------

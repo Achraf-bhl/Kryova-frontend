@@ -13,6 +13,8 @@ import type {
   MaintenanceWindow,
 } from "@/types/api";
 
+import { AiCachePanel } from "./ai-cache-panel";
+
 /**
  * Fleet health, feature flags, maintenance mode and announcements (P3.5–P3.7).
  *
@@ -103,6 +105,8 @@ function HealthSection({
           invitations are going nowhere.
         </p>
       )}
+
+      <AiCachePanel cache={health.ai_cache} />
 
       {health.failures.length > 0 && (
         <div className="space-y-2">
