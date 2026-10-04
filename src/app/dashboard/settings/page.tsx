@@ -13,16 +13,17 @@ import type { AIStatus } from "@/types/api";
 
 const PROVIDERS = [
   {
-    id: "ollama",
-    name: "Ollama (local)",
-    blurb: "Runs on this machine. No API key, works offline, nothing leaves your computer.",
-    env: "AI_PROVIDER=ollama\nAI_MODEL=qwen2.5-coder:7b",
+    id: "deepseek",
+    name: "DeepSeek (hosted)",
+    blurb:
+      "The default. Fast and inexpensive. Needs an API key, and your geometry summary leaves the machine.",
+    env: "AI_PROVIDER=deepseek\nAI_API_KEY=sk-...\nAI_MODEL=deepseek-flash",
   },
   {
     id: "openai_compatible",
     name: "OpenAI-compatible",
-    blurb: "LM Studio, vLLM, llama.cpp, Groq, OpenRouter, OpenAI — anything on /v1.",
-    env: "AI_PROVIDER=openai_compatible\nAI_BASE_URL=http://localhost:1234/v1\nAI_MODEL=your-model",
+    blurb: "OpenAI, Groq, vLLM — anything that speaks /v1. Needs an API key unless you host it.",
+    env: "AI_PROVIDER=openai_compatible\nAI_BASE_URL=https://api.openai.com/v1\nAI_API_KEY=sk-...\nAI_MODEL=your-model",
   },
   {
     id: "anthropic",

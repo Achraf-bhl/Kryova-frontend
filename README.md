@@ -26,19 +26,21 @@ Desktop app for Windows, macOS and Linux · Runs its AI locally by default
 Units are **mm-N-MPa** end to end. Nothing is converted anywhere, because in a
 self-consistent unit system there is nothing to convert.
 
-## Your AI, your machine
+## Your AI, your choice of provider
 
-The AI features run against **whatever model you choose**. The default is a
-local one:
+The AI features run against **a hosted model you configure**. Local models are
+not supported. The default is DeepSeek:
 
 | `AI_PROVIDER` | What it uses | API key | Data leaves your machine |
 |---|---|---|---|
-| `ollama` *(default)* | Any model you have pulled locally | none | **No** |
-| `openai_compatible` | LM Studio, vLLM, llama.cpp, Groq, OpenRouter, OpenAI | depends | depends |
+| `deepseek` *(default)* | DeepSeek (`deepseek-flash`, `deepseek-v4-pro`) | yes | **yes** |
+| `openai_compatible` | OpenAI, Groq, vLLM — anything on `/v1` | usually | yes |
 | `anthropic` | Hosted Claude | yes | yes |
+| `nvidia` | NVIDIA NIM | yes | yes |
 
-CAD geometry is proprietary engineering IP, so the shipping default keeps it on
-your machine. Switching provider is one environment variable — see
+CAD geometry is proprietary engineering IP, and every hosted provider receives
+a summary of it. Pick the provider accordingly. Switching is three environment
+variables, never code — see
 [`../Kryova-backend/.env.example`](../Kryova-backend/.env.example).
 
 The AI is deliberately fenced in: it may **explain** solver output, never
