@@ -1,4 +1,5 @@
 import type { StepView } from "@/components/agent-step-list";
+import type { NextAction } from "@/lib/agent-stream";
 import type { ConversationMessage } from "@/types/conversation";
 
 /**
@@ -14,6 +15,13 @@ export interface Turn {
   role: "user" | "assistant";
   content: string;
   steps?: StepView[];
+  /**
+   * A user turn the *server* wrote because Continue was pressed (2.2). Drawn as
+   * a divider, not a bubble: it is not what the person typed, and putting
+   * "[kryova] continue from the first open task…" in their voice would be the
+   * product speaking and signing the user's name to it.
+   */
+  continuation?: boolean;
   truncated?: boolean;
   /** Why an unfinished turn stopped — see `AgentEvent`'s `done` event. */
   stopReason?:
@@ -21,7 +29,15 @@ export interface Turn {
     | "repeated_calls"
     | "cancelled"
     | "needs_input"
-    | "awaiting_approval";
+    | "awaiting_approval"
+    | "task_boundary"
+    | "provider_busy";
+  /**
+   * What one press of Continue can do, while this is the newest turn (2.2).
+   * Cleared the moment anything follows it: a Continue under an answer that has
+   * since been continued would resume work that is already running.
+   */
+  nextAction?: NextAction;
   /**
    * A decision Kryova is waiting on, rendered in the thread rather than left as
    * the last paragraph of the answer (2026-09-22).
@@ -65,7 +81,10 @@ function stepFrom(message: ConversationMessage): StepView {
  * losing the record of what the agent did to a CATIA document would be worse
  * than showing an answerless turn.
  */
-export function conversationToTurns(messages: readonly ConversationMessage[]): Turn[] {
+export function conversationToTurns(
+  messages: readonly ConversationMessage[],
+  nextAction?: NextAction | null,
+): Turn[] {
   const turns: Turn[] = [];
   let pendingSteps: StepView[] = [];
 
@@ -81,6 +100,16 @@ export function conversationToTurns(messages: readonly ConversationMessage[]): T
 
     if (message.role === "user") {
       if (content === "") continue;
+      if (message.continuation) {
+        // The stored text is the model's instruction; the reader sees the act.
+        turns.push({
+          id: `m-${message.sequence}`,
+          role: "user",
+          content: "Continued",
+          continuation: true,
+        });
+        continue;
+      }
       turns.push({ id: `m-${message.sequence}`, role: "user", content });
       continue;
     }
@@ -100,6 +129,14 @@ export function conversationToTurns(messages: readonly ConversationMessage[]): T
 
   if (pendingSteps.length > 0) {
     turns.push({ id: "trailing-steps", role: "assistant", content: "", steps: pendingSteps });
+  }
+
+  // Only the newest turn can be continued, and only when it is the assistant's:
+  // a stored `next_action` followed by a user message is already stale, and the
+  // server does not send one then, but a stale payload must not draw a button.
+  const last = turns[turns.length - 1];
+  if (nextAction && last?.role === "assistant") {
+    last.nextAction = nextAction;
   }
 
   return turns;

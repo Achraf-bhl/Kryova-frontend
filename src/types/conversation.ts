@@ -8,6 +8,8 @@
  * changes.
  */
 
+import type { NextAction } from "@/lib/agent-stream";
+
 export type ConversationRole = "user" | "assistant" | "tool";
 
 /** One stored message. Tool rows carry the step detail the live stream emits. */
@@ -24,6 +26,13 @@ export interface ConversationMessage {
   summary: string | null;
   is_error: boolean;
   duration_ms: number | null;
+  /**
+   * True when the user pressed Continue rather than typing (ROAD_TO_10 2.2).
+   * The row's `content` is the server's own continuation text, which is not the
+   * user's prose and must not be drawn as a chat bubble. Optional so a backend
+   * that predates the field reads as "typed".
+   */
+  continuation?: boolean;
   created_at: string;
 }
 
@@ -49,6 +58,29 @@ export interface ConversationResume {
   operations: number;
   last_activity_at: string | null;
   unfinished: UnfinishedOperation[];
+  /**
+   * The plan the agent declared, as the server holds it (ROAD_TO_10 2.3). Null
+   * when no plan was ever declared. Optional so a backend that predates the
+   * field reads as "no plan" rather than as an error.
+   */
+  plan?: ResumePlan | null;
+  /** The recorded design, when the agent described the part as a specification. */
+  design?: ResumeDesign | null;
+}
+
+export interface ResumePlan {
+  total: number;
+  settled: number;
+  /** Tasks not yet done or skipped, in plan order. */
+  open: { id: string; title: string; state: string }[];
+  /** What is ready to start now, or null when everything left is blocked. */
+  next: { id: string; title: string } | null;
+}
+
+export interface ResumeDesign {
+  name: string;
+  revision: number;
+  parameters: number;
 }
 
 /** `GET /ai/conversations/{id}` — everything needed to rehydrate a chat. */
@@ -63,6 +95,14 @@ export interface ConversationDetail {
   resume: ConversationResume;
   prompt_tokens: number;
   completion_tokens: number;
+  /**
+   * What Continue would do, when the newest turn stopped in a way that can be
+   * continued and nothing has been said since (2.2). Computed server-side from
+   * the stored turn record, so it survives a reload and a resume gap — a button
+   * that existed only as a live event would vanish the moment somebody
+   * refreshed the page, which is when they are most likely to want it.
+   */
+  next_action?: NextAction | null;
   messages: ConversationMessage[];
 }
 

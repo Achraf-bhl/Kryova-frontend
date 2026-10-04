@@ -31,25 +31,49 @@ export interface ResumeNotice {
   headline: string;
   /** Loose ends, already ordered oldest first by the backend. */
   unfinished: UnfinishedOperation[];
+  /** Where the declared plan stands, when there is one with work left (2.3). */
+  plan?: string;
+  /** The recorded design, by name and revision, when there is one (2.3). */
+  design?: string;
 }
 
 export function resumeNotice(
   resume: ConversationResume | null | undefined,
   now: number = Date.now(),
 ): ResumeNotice | null {
-  if (!resume || resume.operations === 0) return null;
+  if (!resume) return null;
+
+  // A plan with work left is a fact the server holds and nothing else on the
+  // page shows: the transcript says what was *said*, and a task the agent
+  // declared and never reached is in no message at all. Completed plans are
+  // not worth a banner, for the same restraint the module opens with.
+  const plan = resume.plan && resume.plan.total > 0 ? resume.plan : null;
+  const planOpen = plan !== null && plan.open.length > 0;
+
+  if (resume.operations === 0 && !planOpen) return null;
 
   const since = elapsedSince(resume.last_activity_at, now);
   const returning = since !== null && since >= RESUME_GAP_MS;
   const unfinished = resume.unfinished ?? [];
-  if (!returning && unfinished.length === 0) return null;
+  if (!returning && unfinished.length === 0 && !planOpen) return null;
 
   const count = `${resume.operations} CATIA ${resume.operations === 1 ? "operation" : "operations"}`;
-  const headline = returning
-    ? `Picked up ${describeGap(since!)} later — ${count} so far`
-    : `${count} so far`;
+  const headline =
+    resume.operations === 0
+      ? "A plan with work left"
+      : returning
+        ? `Picked up ${describeGap(since!)} later — ${count} so far`
+        : `${count} so far`;
 
-  return { headline, unfinished };
+  const notice: ResumeNotice = { headline, unfinished };
+  if (plan !== null && planOpen) {
+    const next = plan.next ? ` — next: ${plan.next.title}` : " — nothing is ready; the rest is blocked";
+    notice.plan = `Plan: ${plan.settled} of ${plan.total} ${plan.total === 1 ? "task" : "tasks"} done${next}`;
+  }
+  if (resume.design) {
+    notice.design = `Design: ${resume.design.name}, revision ${resume.design.revision}`;
+  }
+  return notice;
 }
 
 /**

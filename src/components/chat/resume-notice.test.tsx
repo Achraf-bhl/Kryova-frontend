@@ -76,4 +76,20 @@ describe("ResumeNotice", () => {
     expect(screen.getByText("2 steps never completed")).toBeInTheDocument();
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
   });
+
+  it("shows the plan and the design beside the headline", () => {
+    render(
+      <ResumeNotice
+        notice={{
+          headline: "Picked up 2 days later — 30 CATIA operations so far",
+          unfinished: [],
+          design: "Design: bracket, revision 7",
+          plan: "Plan: 2 of 5 tasks done — next: Add the fillets",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Design: bracket, revision 7")).toBeInTheDocument();
+    expect(screen.getByText(/next: Add the fillets/)).toBeInTheDocument();
+  });
 });

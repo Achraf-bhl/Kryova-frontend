@@ -50,7 +50,7 @@ export default async function ConversationPage({
         // backend's log of the CATIA calls, which is the same source the agent
         // reads when it resumes. One account of the session, not two.
         resume={conversation.resume}
-        initialTurns={conversationToTurns(conversation.messages)}
+        initialTurns={conversationToTurns(conversation.messages, conversation.next_action)}
       />
     </div>
   );

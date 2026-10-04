@@ -35,6 +35,13 @@ export function ResumeNotice({ notice }: ResumeNoticeProps) {
         <span>{notice.headline}</span>
       </p>
 
+      {(notice.plan || notice.design) && (
+        <ul className="mt-2 space-y-0.5 text-muted">
+          {notice.design && <li>{notice.design}</li>}
+          {notice.plan && <li>{notice.plan}</li>}
+        </ul>
+      )}
+
       {notice.unfinished.length > 0 && (
         <>
           <p className="mt-2.5 font-medium text-accent">

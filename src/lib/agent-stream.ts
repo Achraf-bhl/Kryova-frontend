@@ -51,6 +51,34 @@ export type Intervention = {
   choices: InterventionChoice[];
 };
 
+/**
+ * One thing a stopped turn can be told to do, as data (ROAD_TO_10 2.2).
+ *
+ * **The server defines the continuation, never this client.** A turn that ran
+ * out of tool rounds used to leave the user to type something, and what people
+ * type there is "go on" or "continue", which the model reads as a new request
+ * and sometimes answers by starting the whole design again. Pressing the
+ * button sends `continuation: "continue"` and the backend writes the message —
+ * naming the first open task of the plan, so it carries on from what is built.
+ *
+ * `reason` is why the turn stopped, which decides the wording around the
+ * button; `detail` is what pressing it does, in words, and must be rendered
+ * for the reason `InterventionChoice.detail` must be.
+ */
+export type NextAction = {
+  kind: "continue";
+  reason:
+    | "step_budget"
+    | "repeated_calls"
+    | "needs_input"
+    | "task_boundary"
+    | "provider_busy";
+  label: string;
+  detail: string;
+  /** What is still open in the plan the model declared; empty when it declared none. */
+  open_tasks: { id: string; title: string; state: string }[];
+};
+
 export type AgentEvent =
   | { type: "start"; conversation_id: string }
   /**
@@ -121,7 +149,15 @@ export type AgentEvent =
          * it: an unknown string is not a type error, it is a missing branch.
          */
         | "needs_input"
-        | "awaiting_approval";
+        | "awaiting_approval"
+        /**
+         * ROAD_TO_10 2.4 and 3.6: the turn ended on purpose at a task boundary
+         * because the rest of the plan would not fit in its tool rounds, or
+         * because the model provider stayed busy past the transport's retries.
+         * Neither is a failure and both carry a `next_action`.
+         */
+        | "task_boundary"
+        | "provider_busy";
       /** Tool calls actually run this turn — the length of the step list. */
       steps: number;
       prompt_tokens?: number;
@@ -135,6 +171,13 @@ export type AgentEvent =
        * lose. `null` on a turn that needs nobody.
        */
       intervention?: Intervention | null;
+      /**
+       * What one press can do next (2.2), or `null` when the turn needs no
+       * continuing — it finished, was stopped by the user, or is waiting on a
+       * decision that `intervention` already carries. Repeated on `done` for
+       * `intervention`'s reason: a reconnect may land after a standalone event.
+       */
+      next_action?: NextAction | null;
     }
   /**
    * Kryova needs a person, and says so as a decision rather than as prose
@@ -185,7 +228,13 @@ export interface EventCursor {
 export type CursoredEvent = AgentEvent & EventCursor;
 
 export interface ChatRequest {
-  message: string;
+  /**
+   * What the user typed. Absent on a continuation — the server writes that
+   * message, so the transcript can tell it from the user's own words.
+   */
+  message?: string;
+  /** Pressing Continue (`NextAction.kind`). Send this or `message`, never both. */
+  continuation?: "continue";
   conversation_id?: string | null;
   project_id?: string | null;
   allow_mutations?: boolean;

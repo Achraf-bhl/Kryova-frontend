@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { NextAction } from "@/lib/agent-stream";
 import { conversationToTurns } from "@/lib/conversation-transcript";
 import type { ConversationMessage } from "@/types/conversation";
 
@@ -139,5 +140,79 @@ describe("conversationToTurns", () => {
 
   it("returns nothing for an empty transcript", () => {
     expect(conversationToTurns([])).toEqual([]);
+  });
+});
+
+describe("a continuation is an act, not the user's words (2.2)", () => {
+  const ACTION: NextAction = {
+    kind: "continue",
+    reason: "step_budget",
+    label: "Continue",
+    detail: "Carries on from the first open task.",
+    open_tasks: [{ id: "t2", title: "Cut the holes", state: "pending" }],
+  };
+
+  it("draws the stored continuation as a marked divider and never as typed text", () => {
+    const turns = conversationToTurns([
+      message({ sequence: 1, role: "user", content: "Build the bracket" }),
+      message({ sequence: 2, role: "assistant", content: "Ran out of rounds." }),
+      message({
+        sequence: 3,
+        role: "user",
+        content: "[kryova] Continue from t2: Cut the holes.",
+        continuation: true,
+      }),
+      message({ sequence: 4, role: "assistant", content: "Holes cut." }),
+    ]);
+
+    expect(turns[2]).toMatchObject({ role: "user", continuation: true, content: "Continued" });
+    // The server's instruction to the model never reaches the reader's thread.
+    expect(turns.map((turn) => turn.content).join(" ")).not.toContain("[kryova]");
+  });
+
+  it("treats a row with no marker as the user's own words, as before", () => {
+    const turns = conversationToTurns([
+      message({ sequence: 1, role: "user", content: "continue please" }),
+    ]);
+    expect(turns[0]).toEqual({ id: "m-1", role: "user", content: "continue please" });
+  });
+
+  it("puts the stored next action on the newest assistant turn only", () => {
+    const turns = conversationToTurns(
+      [
+        message({ sequence: 1, role: "user", content: "a" }),
+        message({ sequence: 2, role: "assistant", content: "b" }),
+        message({ sequence: 3, role: "user", content: "c" }),
+        message({ sequence: 4, role: "assistant", content: "d" }),
+      ],
+      ACTION,
+    );
+    expect(turns[1]?.nextAction).toBeUndefined();
+    expect(turns[3]?.nextAction).toEqual(ACTION);
+  });
+
+  it("draws no button when the thread ends on the user's turn", () => {
+    // A stale payload after something was said is the server's mistake to
+    // avoid, and the client does not compound it.
+    const turns = conversationToTurns(
+      [
+        message({ sequence: 1, role: "user", content: "a" }),
+        message({ sequence: 2, role: "assistant", content: "b" }),
+        message({ sequence: 3, role: "user", content: "c" }),
+      ],
+      ACTION,
+    );
+    expect(turns.some((turn) => turn.nextAction)).toBe(false);
+  });
+
+  it("draws no button when the server sent none", () => {
+    const turns = conversationToTurns(
+      [
+        message({ sequence: 1, role: "user", content: "a" }),
+        message({ sequence: 2, role: "assistant", content: "b" }),
+      ],
+      null,
+    );
+    expect(turns.some((turn) => turn.nextAction)).toBe(false);
   });
 });

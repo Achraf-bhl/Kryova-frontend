@@ -5,7 +5,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentProgress, StepView } from "@/components/agent-step-list";
 import { api } from "@/lib/api-client";
 import type { Turn } from "@/lib/conversation-transcript";
-import { resumeAgent, streamAgent, type CursoredEvent } from "@/lib/agent-stream";
+import {
+  resumeAgent,
+  streamAgent,
+  type ChatRequest,
+  type CursoredEvent,
+} from "@/lib/agent-stream";
 
 /** What an auto-created project is named before the agent gets a chance to
  * rename it to something that fits what the user actually asked for. */
@@ -90,7 +95,9 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
    * `canRetry` is rendered — a ref read during render is exactly the value
    * React will not re-render for.
    */
-  const [lastMessage, setLastMessage] = useState<string | null>(null);
+  const [lastRequest, setLastRequest] = useState<Pick<ChatRequest, "message" | "continuation"> | null>(
+    null,
+  );
   const reportedProjectRef = useRef<string | null>(null);
   /**
    * The decision this turn is waiting on, held between the `intervention` event
@@ -158,6 +165,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
       stopReason?: Turn["stopReason"];
       error?: string;
       intervention?: Turn["intervention"];
+      nextAction?: Turn["nextAction"];
     }) => {
       const steps = liveStepsRef.current;
       updateSteps(() => []);
@@ -165,7 +173,13 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
       // truncation: dropping it here would be the 2026-09-10 defect again, in
       // which `needs_input` arrived on the wire and was silently discarded one
       // layer above the banner that needed it.
-      if (steps.length === 0 && !extra?.error && !extra?.truncated && !extra?.intervention)
+      if (
+        steps.length === 0 &&
+        !extra?.error &&
+        !extra?.truncated &&
+        !extra?.intervention &&
+        !extra?.nextAction
+      )
         return;
 
       setTurns((previous) => {
@@ -183,6 +197,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
               ...(extra?.truncated ? { truncated: true } : {}),
               ...(extra?.stopReason ? { stopReason: extra.stopReason } : {}),
               ...(extra?.intervention ? { intervention: extra.intervention } : {}),
+              ...(extra?.nextAction ? { nextAction: extra.nextAction } : {}),
               ...(extra?.error ? { error: extra.error } : {}),
             },
           ];
@@ -197,6 +212,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ...(extra?.truncated ? { truncated: true } : {}),
             ...(extra?.stopReason ? { stopReason: extra.stopReason } : {}),
             ...(extra?.intervention ? { intervention: extra.intervention } : {}),
+            ...(extra?.nextAction ? { nextAction: extra.nextAction } : {}),
             ...(extra?.error ? { error: extra.error } : {}),
           },
         ];
@@ -328,6 +344,11 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ...(event.intervention ?? interventionRef.current
               ? { intervention: event.intervention ?? interventionRef.current! }
               : {}),
+            // Typed, server-defined, and only ever on `done` — it is the one
+            // field here with no standalone event, because a reconnect that
+            // lands after a standalone event would lose a button and nothing
+            // would say a button had existed.
+            ...(event.next_action ? { nextAction: event.next_action } : {}),
           });
           interventionRef.current = null;
           setThinking(null);
@@ -354,10 +375,23 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   );
 
   const run = useCallback(
-    async (message: string) => {
+    async (request: Pick<ChatRequest, "message" | "continuation">) => {
       setError(null);
       answeredRef.current = false;
-      setLastMessage(message);
+      setLastRequest(request);
+      // A Continue under an answer that is about to be continued would resume
+      // work that is already running, so the previous turn gives its button up
+      // the moment anything new is sent — by either route, typed or pressed.
+      setTurns((previous) =>
+        previous.some((turn) => turn.nextAction)
+          ? previous.map((turn) => {
+              if (!turn.nextAction) return turn;
+              const { nextAction, ...rest } = turn;
+              void nextAction;
+              return rest;
+            })
+          : previous,
+      );
       updateSteps(() => []);
       setStreamingText("");
       // A fresh turn resumes from nothing: its own `start` event supplies the
@@ -395,7 +429,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
       try {
         await streamAgent(
           {
-            message,
+            ...request,
             conversation_id: conversationIdRef.current,
             project_id: effectiveProjectId,
             allow_mutations: allowMutations,
@@ -482,16 +516,36 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
         ...previous,
         { id: nextTurnId("user"), role: "user", content: trimmed },
       ]);
-      await run(trimmed);
+      await run({ message: trimmed });
     },
     [busy, run],
   );
 
+  /**
+   * Press Continue (ROAD_TO_10 2.2).
+   *
+   * Sends `continuation: "continue"` and **no text**: the server writes the
+   * instruction, naming the first open task, and stores it marked as a
+   * continuation. A turn is appended here only so the thread shows that the
+   * person acted — as a divider, never as words put in their mouth.
+   *
+   * Refused while busy or with no conversation: there is nothing to continue
+   * before a first turn exists, and the server would say so with a 404.
+   */
+  const continueTurn = useCallback(async () => {
+    if (busy || !conversationIdRef.current) return;
+    setTurns((previous) => [
+      ...previous,
+      { id: nextTurnId("user"), role: "user", content: "Continued", continuation: true },
+    ]);
+    await run({ continuation: "continue" });
+  }, [busy, run]);
+
   /** Re-run the last message after a failure, without retyping it. */
   const retry = useCallback(async () => {
-    if (!lastMessage || busy) return;
-    await run(lastMessage);
-  }, [busy, lastMessage, run]);
+    if (!lastRequest || busy) return;
+    await run(lastRequest);
+  }, [busy, lastRequest, run]);
 
   /**
    * Stop the running turn (P5.6). Two presses, two different things.
@@ -534,7 +588,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
     busy,
     error,
     /** True when there is a failed turn that `retry` would re-run. */
-    canRetry: !busy && error !== null && lastMessage !== null,
+    canRetry: !busy && error !== null && lastRequest !== null,
     allowMutations,
     setAllowMutations,
     liveSteps,
@@ -547,6 +601,7 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
      */
     streamingText,
     send,
+    continueTurn,
     retry,
     stop,
     /**

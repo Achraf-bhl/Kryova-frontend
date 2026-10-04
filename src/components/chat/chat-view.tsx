@@ -8,6 +8,7 @@ import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { Composer } from "@/components/chat/composer";
 import { CopyButton } from "@/components/chat/copy-button";
+import { ContinuePrompt } from "@/components/chat/continue-prompt";
 import { InterventionPrompt } from "@/components/chat/intervention-prompt";
 import { ResumeNotice } from "@/components/chat/resume-notice";
 import { MarkdownMessage } from "@/components/markdown-message";
@@ -145,6 +146,7 @@ export function ChatView({
     narration,
     streamingText,
     send,
+    continueTurn,
     retry,
     stop,
     stopping,
@@ -301,8 +303,18 @@ export function ChatView({
               </div>
             )}
 
-            {turns.map((turn) =>
-              turn.role === "user" ? (
+            {turns.map((turn, index) =>
+              turn.role === "user" && turn.continuation ? (
+                // The person pressed Continue. A divider, not a bubble: the
+                // text the model was sent is the server's, and drawing it in
+                // the user's voice would put words in their mouth.
+                <p
+                  key={turn.id}
+                  className="flex items-center gap-3 text-xs text-muted before:h-px before:flex-1 before:bg-border after:h-px after:flex-1 after:bg-border"
+                >
+                  {turn.content}
+                </p>
+              ) : turn.role === "user" ? (
                 <p
                   key={turn.id}
                   className="ml-auto max-w-[85%] whitespace-pre-wrap rounded-lg rounded-br-sm bg-primary-soft px-3.5 py-2.5 text-[0.9375rem] text-blueprint"
@@ -337,8 +349,14 @@ export function ChatView({
                         // people that gates are a malfunction. `needs_input`
                         // stays amber — it is reached by repeated failure, and
                         // something really did go wrong on the way there.
+                        //
+                        // `task_boundary` is the agent pacing itself on
+                        // purpose and `provider_busy` is somebody else's
+                        // queue; neither is the user's or the agent's fault.
                         turn.stopReason === "cancelled" ||
-                        turn.stopReason === "awaiting_approval"
+                        turn.stopReason === "awaiting_approval" ||
+                        turn.stopReason === "task_boundary" ||
+                        turn.stopReason === "provider_busy"
                           ? "text-xs text-muted"
                           : "text-xs text-warning"
                       }
@@ -375,7 +393,13 @@ export function ChatView({
                               ? turn.intervention
                                 ? "The agent reached a checkpoint that needs sign-off. Nothing past it has run — decide below, or open it under Approvals."
                                 : "The agent reached a checkpoint that needs sign-off. Nothing past it has run; approve or reject it under Approvals and it carries on from there."
-                              : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
+                              : turn.stopReason === "task_boundary"
+                                ? "The agent stopped at the end of a task because the rest of the plan would not fit in this turn's tool rounds. Everything above ran — press Continue to start the next task."
+                                : turn.stopReason === "provider_busy"
+                                  ? "The model provider stayed too busy to answer after several tries. Nothing was lost — press Continue to try again."
+                                  : turn.nextAction
+                                    ? "The agent used all of its tool rounds for that turn. Everything above ran — press Continue to carry on from what is built."
+                                    : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
                     </p>
                   )}
                   {/* The decision itself, under the answer it interrupted.
@@ -388,6 +412,16 @@ export function ChatView({
                       intervention={turn.intervention}
                       disabled={busy}
                       onAnswer={(text) => void send(text)}
+                    />
+                  )}
+                  {/* Only the newest turn can be continued. Anything later in
+                      the thread means the work already moved on, and a button
+                      under an older answer would resume it a second time. */}
+                  {turn.nextAction && index === turns.length - 1 && (
+                    <ContinuePrompt
+                      action={turn.nextAction}
+                      disabled={busy}
+                      onContinue={() => void continueTurn()}
                     />
                   )}
                   {turn.error && (
