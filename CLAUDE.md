@@ -50,10 +50,27 @@ Two things CI checks that no local command does by default:
 - **`.nvmrc` pins Node** (24), and CI reads that file rather than naming a version of its own,
   so `nvm use` / `fnm` and CI cannot drift apart.
 
-`.github/workflows/desktop.yml` is `workflow_dispatch` only: it `cargo check`s the Tauri shell on
-Windows and deliberately builds **no** release artefact. The reason is written at the top of that
-file and it is worth reading before anyone wires up a tagged release — the MSI bakes the build
-machine's absolute paths into the binary, so one built on a runner starts nothing.
+`.github/workflows/desktop.yml` is `workflow_dispatch` only. Its first job `cargo check`s the Tauri
+shell; the others build the MSI, **install it on a second runner**, start it, ask `/health`,
+uninstall it, and — only for a signed build, and only when asked — make a *draft* release. **It has
+never run** (ROAD_TO_10 4.9): read the header of that file and `../Kryova-backend/docs/DESKTOP_RELEASE.md`
+(the runbook, and the list of what is unverified) before trusting it. The installer is *staged*,
+not baked: `npm run desktop:release` runs `scripts/stage-desktop.mjs` (the Next standalone server,
+a pinned Node, CPython with the backend's wheels, PostgreSQL) and compiles no checkout path in.
+Three things the first real run taught, each of which looked like success:
+
+1. **One dynamic `path.join` in code a route imports makes Next trace the whole project.** The
+   build *warns* ("Dynamic filesystem access causes tracing of the whole project") and exits 0, and
+   the standalone output then carries `src/`, `scripts/`, `CLAUDE.md` and `src-tauri/target` — 5.3 GB
+   instead of 52 MB. For a path that is genuinely a runtime path, write
+   `path.join(/*turbopackIgnore: true*/ dir, name)` (`src/lib/diagnostics.ts`). Read a build's
+   warnings, not its exit code; the stager also refuses a tree containing those names.
+2. **`src-tauri/bundle/` is the stager's output and is gitignored.** It is over a gigabyte; never
+   `git add` it.
+3. **A release overlay can be checked against Tauri's own parser without Windows:**
+   `TAURI_CONFIG='<json>' cargo check --locked --target x86_64-pc-windows-gnu` (an unknown key is
+   refused by name; a resource path that does not exist is refused). Put `CARGO_TARGET_DIR` in a
+   scratch directory so the resource copy does not land in `src-tauri/target`.
 
 ## Architecture
 
