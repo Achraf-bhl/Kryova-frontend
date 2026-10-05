@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { ServerHealth } from "@/components/onboarding/machine-checks";
 import { CopyDiagnostics } from "@/components/setup/copy-diagnostics";
 import { tauriGlobal } from "@/lib/desktop-bridge";
 import {
@@ -163,6 +164,9 @@ export default function SetupPage() {
             ))}
           </ul>
         ) : null}
+
+        {/* Only once the API answers: the database and file-storage checks come from it. */}
+        {!running && apiResult?.ok && <ServerHealth />}
 
         {!running && checks && (
           <div className="mt-8 flex flex-col gap-3">

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { MachineChecks } from "@/components/onboarding/machine-checks";
 import { api } from "@/lib/api-client";
 
 /**
@@ -144,6 +145,9 @@ export function FirstRunChecklist() {
           </li>
         ))}
       </ol>
+
+      {/* Whether this machine can do what the steps ask: model, geometry, CATIA bridge. */}
+      <MachineChecks />
     </section>
   );
 }
