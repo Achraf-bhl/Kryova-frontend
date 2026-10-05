@@ -22,6 +22,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  describeWaiting,
   isTerminalStatus,
   jobStatusLabel,
   TERMINAL_JOB_STATUSES,
@@ -33,6 +34,7 @@ import {
  *
  *   class JobStatus(str, enum.Enum):
  *       QUEUED = "queued"
+ *       WAITING = "waiting"          # added 2026-10-05, ROAD_TO_10 3.4
  *       RUNNING = "running"
  *       SUCCEEDED = "succeeded"
  *       FAILED = "failed"
@@ -43,6 +45,7 @@ import {
  */
 const BACKEND_JOB_STATUS_VALUES = [
   "queued",
+  "waiting",
   "running",
   "succeeded",
   "failed",
@@ -70,6 +73,27 @@ describe("JobStatus matches the backend enum", () => {
     expect(isTerminalStatus("cancelled")).toBe(true);
     expect(isTerminalStatus("queued")).toBe(false);
     expect(isTerminalStatus("running")).toBe(false);
+    // ROAD_TO_10 3.4. A run held back by its owner's ceiling has not finished
+    // and will start: if this were true the results page would stop polling it
+    // and show "Waiting for a slot" for ever.
+    expect(isTerminalStatus("waiting")).toBe(false);
+  });
+
+  it("labels a waiting run as waiting, not as queued", () => {
+    // Two different waits: `queued` is for a worker thread, `waiting` is for
+    // one of the person's own runs to finish. Calling both "Queued" would
+    // hide that the second is theirs to shorten.
+    expect(jobStatusLabel("waiting")).toBe("Waiting for a slot");
+    expect(jobStatusLabel("waiting")).not.toBe(jobStatusLabel("queued"));
+  });
+
+  it("says where a waiting run stands only when the server said so", () => {
+    expect(describeWaiting(1)).toBe("Waiting for one of your runs to finish — you are next");
+    expect(describeWaiting(3)).toBe("Waiting for one of your runs to finish — place 3 in line");
+    // No place from the server means no place on the screen: working one out
+    // here would be a guess about other people's runs.
+    expect(describeWaiting(null)).toBe("Waiting for one of your runs to finish");
+    expect(describeWaiting(undefined)).not.toMatch(/place|next/);
   });
 
   it("does not render a stopped run as a failed one", () => {

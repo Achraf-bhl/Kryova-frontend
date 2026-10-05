@@ -22,6 +22,7 @@ import {
 import type { SurfaceFieldArrays } from "@/lib/surface-field";
 import {
   describeProgress,
+  describeWaiting,
   isTerminalStatus,
   jobStatusLabel,
   type SimulationRead,
@@ -174,8 +175,9 @@ function SimulationDetail() {
                 twenty-minute solve teaches a reader to predict a finish time
                 nobody measured. A convergence study *does* have countable
                 grids, and says so. */}
-            {describeProgress(simulation.progress) || "Meshing and solving"} — this page will
-            update automatically.
+            {simulation.status === "waiting"
+              ? `${describeWaiting(simulation.queue_position)} — this page will update automatically.`
+              : `${describeProgress(simulation.progress) || "Meshing and solving"} — this page will update automatically.`}
           </span>
           <div className="ml-auto">
             <StopRunButton

@@ -253,8 +253,14 @@ export interface LoadCasePayload {
  * every fixture was written against this file rather than against the server.
  *
  * If you change these, change `app/models/simulation.py` in the same commit.
+ *
+ * `waiting` (ROAD_TO_10 3.4) is **not** `queued`, and the difference is who is
+ * being waited for: `queued` is handed to the job queue and waits for a worker,
+ * `waiting` is held back by the person's own concurrent-run ceiling and starts
+ * when one of their runs finishes. It is not terminal, it can be stopped, and
+ * stopping it spends nothing.
  */
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type JobStatus = "queued" | "waiting" | "running" | "succeeded" | "failed" | "cancelled";
 
 /**
  * Statuses after which a job will never change again.
@@ -279,6 +285,8 @@ export function jobStatusLabel(status: string): string {
   switch (status) {
     case "queued":
       return "Queued";
+    case "waiting":
+      return "Waiting for a slot";
     case "running":
       return "Solving";
     case "succeeded":
@@ -290,6 +298,20 @@ export function jobStatusLabel(status: string): string {
     default:
       return status;
   }
+}
+
+/**
+ * What a `waiting` run is waiting for, in a sentence.
+ *
+ * The place is the server's (`queue_position`, 1-based, computed at read time
+ * and never stored), and it is stated only when the server gave one: a place
+ * the page worked out for itself would be a guess about other people's runs.
+ * First in line says "next", because "place 1" reads like a rank, not a wait.
+ */
+export function describeWaiting(position: number | null | undefined): string {
+  const reason = "Waiting for one of your runs to finish";
+  if (position === null || position === undefined) return reason;
+  return position === 1 ? `${reason} — you are next` : `${reason} — place ${position} in line`;
 }
 
 /** The stages a run passes through, in order. Mirrors `app/simulation/progress.py`. */
@@ -352,6 +374,13 @@ export interface SimulationRead {
    * half a count rather than shipping a numerator with no denominator.
    */
   progress: SimulationProgress | null;
+  /**
+   * Place in the owner's waiting line (ROAD_TO_10 3.4), 1-based, only while the
+   * status is `waiting`; `null` for every other run. Computed by the server when
+   * the run is read, so it moves as the runs ahead finish and is never a stored
+   * figure that could go stale.
+   */
+  queue_position?: number | null;
   result: StaticResult | null;
   fields_media_id: string | null;
   error: string | null;

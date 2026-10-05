@@ -180,3 +180,38 @@ describe("SimulationPage progress", () => {
     expect(await screen.findByText(/^Meshing and solving — this page will/)).toBeInTheDocument();
   });
 });
+
+describe("SimulationPage waiting for a slot", () => {
+  const WAITING = {
+    ...BASE_SIMULATION,
+    status: "waiting",
+    result: null,
+    error: null,
+    started_at: null,
+    finished_at: null,
+  };
+
+  it("shows the place in line the server reported, and offers to stop the run", async () => {
+    readSimulation.mockResolvedValue({ ...WAITING, queue_position: 3 });
+
+    render(<SimulationPage />);
+
+    expect(
+      await screen.findByText(/Waiting for one of your runs to finish — place 3 in line/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Waiting for a slot…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop this run" })).toBeInTheDocument();
+    // Not the solver's stage line: nothing has been meshed or solved.
+    expect(screen.queryByText(/Meshing and solving/)).not.toBeInTheDocument();
+  });
+
+  it("does not invent a place when the server gave none", async () => {
+    readSimulation.mockResolvedValue({ ...WAITING, queue_position: null });
+
+    render(<SimulationPage />);
+
+    const line = await screen.findByText(/^Waiting for one of your runs to finish — this page will/);
+    expect(line).toBeInTheDocument();
+    expect(line.textContent).not.toMatch(/place|next/);
+  });
+});

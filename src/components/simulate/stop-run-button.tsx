@@ -9,7 +9,8 @@ import type { JobStatus, SimulationRead } from "@/types/api";
 /**
  * Stop a run (P5.6), and say honestly what that achieved.
  *
- * **A queued run and a running one stop differently**, and this button reports
+ * **A queued run and a running one stop differently** (and a `waiting` one, held back
+ * by the owner's own ceiling and never handed to a worker, stops like a queued one), and this button reports
  * the difference rather than smoothing it over. The backend answers with the
  * run's *actual* status: `cancelled` for a queued job, still `running` for one
  * already inside CalculiX. That one stops at its next stage boundary — after
@@ -66,6 +67,9 @@ export function StopRunButton({
         <p className="mt-1 text-xs text-faint">
           Stops at the next stage. Compute already used is billed.
         </p>
+      )}
+      {status === "waiting" && (
+        <p className="mt-1 text-xs text-faint">It has not started, so stopping it costs nothing.</p>
       )}
       {error && (
         <p role="alert" className="mt-1 text-xs text-danger">
