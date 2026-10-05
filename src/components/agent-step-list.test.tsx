@@ -259,3 +259,60 @@ describe("AgentStepList — captured views", () => {
     expect(mediaBlob).not.toHaveBeenCalled();
   });
 });
+
+describe("AgentStepList grouping (8.8)", () => {
+  const base = { arguments: {}, status: "ok" as const };
+
+  it("heads each plan task with its title and how it ended", () => {
+    render(
+      <AgentStepList
+        steps={[
+          {
+            ...base,
+            id: "p",
+            tool: "plan_work",
+            label: "Planning the work",
+            arguments: { tasks: [{ id: "frame", title: "Build the frame" }] },
+          },
+          { ...base, id: "a", tool: "update_task", label: "Updating the plan", arguments: { id: "frame", state: "active" } },
+          { ...base, id: "b", tool: "catia_pad", label: "Pad" },
+          { ...base, id: "c", tool: "update_task", label: "Updating the plan", arguments: { id: "frame", state: "done" } },
+        ]}
+      />,
+    );
+    expect(screen.getByRole("region", { name: "Build the frame" })).toBeInTheDocument();
+    expect(screen.getByText("done")).toBeInTheDocument();
+  });
+
+  it("shows a refusal in full, in the row", () => {
+    render(
+      <AgentStepList
+        steps={[
+          {
+            ...base,
+            id: "x",
+            tool: "update_task",
+            label: "Updating the plan",
+            status: "error",
+            summary: "ram cannot be marked done while frame is open",
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByText(/cannot be marked done while frame is open/)).toHaveClass("text-danger");
+  });
+
+  it("folds a run of successful look-ups into one line", () => {
+    render(
+      <AgentStepList
+        steps={[1, 2, 3].map((n) => ({
+          ...base,
+          id: `r${n}`,
+          tool: "catia_list_features",
+          label: `List ${n}`,
+        }))}
+      />,
+    );
+    expect(screen.getByText(/Looked things up — 3 steps/)).toBeInTheDocument();
+  });
+});

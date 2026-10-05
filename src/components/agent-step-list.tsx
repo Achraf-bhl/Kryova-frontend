@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { ToolImage } from "@/components/tool-image";
+import { groupSteps, hasPlan, type StepGroup, type TaskState } from "@/lib/step-groups";
 import { toolImageFrom } from "@/lib/tool-media";
 
 export interface StepView {
@@ -138,9 +139,14 @@ function Step({ step }: { step: StepView }) {
         aria-expanded={open}
       >
         <span className="text-sm text-accent">{step.label}</span>
-        {step.summary && (
-          <span className="truncate text-xs text-muted">— {step.summary}</span>
-        )}
+        {step.summary &&
+          (step.status === "error" ? (
+            // A refusal is the tool's own sentence, and it is the thing to read: whole,
+            // wrapped and red, not truncated to one muted line (ROAD_TO_10 8.8).
+            <span className="min-w-0 text-xs font-medium text-danger">— {step.summary}</span>
+          ) : (
+            <span className="truncate text-xs text-muted">— {step.summary}</span>
+          ))}
         <span className="ml-auto shrink-0 text-[11px] tabular-nums text-muted">
           {step.status === "running"
             ? "running…"
@@ -178,6 +184,76 @@ function Step({ step }: { step: StepView }) {
   );
 }
 
+const TASK_STATE_LABEL: Record<TaskState, string> = {
+  pending: "not started",
+  active: "in progress",
+  done: "done",
+  blocked: "blocked",
+  skipped: "skipped",
+};
+
+const TASK_STATE_TONE: Record<TaskState, string> = {
+  pending: "text-muted",
+  active: "text-primary",
+  done: "text-success",
+  blocked: "text-warning",
+  skipped: "text-muted",
+};
+
+function Items({ group }: { group: StepGroup }) {
+  return (
+    <ol className="space-y-0.5">
+      {group.items.map((item) =>
+        item.kind === "step" ? (
+          <Step key={item.step.id} step={item.step} />
+        ) : (
+          <li key={item.steps[0].id} className="pl-6">
+            <details>
+              <summary className="cursor-pointer py-1 text-xs text-muted">
+                Looked things up — {item.steps.length} steps
+              </summary>
+              <ol className="space-y-0.5">
+                {item.steps.map((step) => (
+                  <Step key={step.id} step={step} />
+                ))}
+              </ol>
+            </details>
+          </li>
+        ),
+      )}
+    </ol>
+  );
+}
+
+/** The steps, grouped by the plan task they belong to when the model declared a plan (8.8). */
+function GroupedSteps({ steps }: { steps: StepView[] }) {
+  const groups = useMemo(() => groupSteps(steps), [steps]);
+  if (!hasPlan(groups)) {
+    return groups[0] ? <Items group={groups[0]} /> : null;
+  }
+  return (
+    <div className="space-y-3">
+      {groups.map((group, index) =>
+        group.taskId === null ? (
+          <Items key={`loose-${index}`} group={group} />
+        ) : (
+          <section key={`${group.taskId}-${index}`} aria-label={group.title ?? group.taskId}>
+            <h3 className="mb-0.5 flex items-baseline gap-2 text-xs font-medium text-accent">
+              {group.title}
+              {group.state && (
+                <span className={`text-[11px] font-normal ${TASK_STATE_TONE[group.state]}`}>
+                  {TASK_STATE_LABEL[group.state]}
+                </span>
+              )}
+            </h3>
+            <Items group={group} />
+          </section>
+        ),
+      )}
+    </div>
+  );
+}
+
 /** The agent's work for one turn, rendered as it happens.
  *
  * `thinking` is the loop's state (see `AgentProgress`) and is null for a turn
@@ -210,11 +286,7 @@ export function AgentStepList({
         </p>
       </div>
 
-      <ol className="space-y-0.5">
-        {steps.map((step) => (
-          <Step key={step.id} step={step} />
-        ))}
-      </ol>
+      <GroupedSteps steps={steps} />
 
       {/* The dots mean "waiting on the model", so they are gated on
           `composing` rather than on the turn being alive. While a tool runs it
