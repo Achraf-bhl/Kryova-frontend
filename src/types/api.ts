@@ -593,6 +593,19 @@ export interface AIUserAllowance {
   daily_token_budget: number;
   /** 0 means unlimited. */
   daily_cost_budget_micro_usd: number;
+  /** Whole percent of the ceiling that will be hit first; null when there is none (8.1). */
+  percent?: number | null;
+  /** `unlimited`, `ok`, `warning` (from 80 %) or `exhausted` (from 100 %). */
+  level?: "unlimited" | "ok" | "warning" | "exhausted";
+  /** Which ceiling `percent` is about — a warning about tokens is not one about money. */
+  basis?: "tokens" | "cost" | null;
+}
+
+/** `GET /ai/conversations/{id}/usage` and the chat stream's `usage` event (8.1). */
+export interface ConversationUsage {
+  conversation: AIDayUsage;
+  today: AIDayUsage;
+  allowance: AIUserAllowance;
 }
 
 export interface AIOrgCap {

@@ -6,6 +6,7 @@
  */
 
 import { fetchWithRefresh } from "@/lib/api-client";
+import type { ConversationUsage } from "@/types/api";
 import { RateLimitedError, rateLimitMessage, retryAfterSeconds } from "@/lib/rate-limit";
 
 /**
@@ -191,6 +192,12 @@ export type AgentEvent =
    * the union because it is on the wire — see `app/api/routes/ai.py`.
    */
   | { type: "title"; title: string }
+  /**
+   * What this conversation has cost so far, beside today's total and allowance
+   * (ROAD_TO_10 8.1). Sent after `title`, once the turn has settled, so it
+   * includes the calls that are not chat steps.
+   */
+  | ({ type: "usage" } & ConversationUsage)
   /**
    * A piece of the assistant's answer as it is being written (P5.1).
    *

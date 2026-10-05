@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AgentProgress, StepView } from "@/components/agent-step-list";
+import type { ConversationUsage } from "@/types/api";
 import { ApiError, api } from "@/lib/api-client";
 import { dropLastExchange } from "@/lib/conversation-transcript";
 import { RateLimitedError } from "@/lib/rate-limit";
@@ -93,6 +94,10 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
   const [thinking, setThinking] = useState<AgentProgress | null>(null);
   const [narration, setNarration] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(conversationIdProp);
+  // What this conversation has cost, as the server last said (8.1). Only ever
+  // set from the server's own sums — never accumulated here from per-turn
+  // numbers, which would drift from the ledger the day a title call is billed.
+  const [usage, setUsage] = useState<ConversationUsage | null>(null);
 
   /**
    * A mirror of `liveSteps` that can be read synchronously.
@@ -295,6 +300,12 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
             ),
           );
           break;
+        case "usage": {
+          const { type, ...sums } = event;
+          void type;
+          setUsage(sums);
+          break;
+        }
         case "token":
           // Deltas are for display while the answer is being written. The
           // `message` event that follows carries the real text and replaces
@@ -646,6 +657,8 @@ export function useAgentChat(options: UseAgentChatOptions = {}) {
 
   return {
     conversationId,
+    /** The conversation's running cost and today's allowance, or null before the server has said. */
+    usage,
     turns,
     busy,
     error,

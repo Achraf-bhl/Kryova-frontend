@@ -9,6 +9,7 @@ import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { CheckpointsMenu } from "@/components/chat/checkpoints-menu";
 import { Composer } from "@/components/chat/composer";
+import { UsageMeter } from "@/components/chat/usage-meter";
 import { CopyButton } from "@/components/chat/copy-button";
 import { ContinuePrompt } from "@/components/chat/continue-prompt";
 import { InterventionPrompt } from "@/components/chat/intervention-prompt";
@@ -172,6 +173,7 @@ export function ChatView({
     retry,
     stop,
     stopping,
+    usage,
   } = useAgentChat({
     conversationId,
     initialTurns,
@@ -662,6 +664,7 @@ export function ChatView({
               <CatiaChip state={catia.state} detail={catia.detail} document={catiaDocument} />
             }
           />
+          <UsageMeter conversationId={liveConversationId ?? conversationId ?? null} live={usage} />
 
           {empty && (
             <div className="mt-4 grid gap-3 sm:grid-cols-3">
