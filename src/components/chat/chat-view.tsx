@@ -600,6 +600,17 @@ export function ChatView({
               sitting next to an old turn would quietly redraw itself into a
               later part. Renders nothing at all unless the open kernel is what
               builds here — see `lib/kernel-render.ts`. */}
+          {/* A file dropped before the first turn belongs to no conversation yet; list it
+              here so what was read is on screen before the agent reads it (8.9). */}
+          {liveConversationId === null && project && (
+            <div className="mb-2">
+              <AttachmentPanel
+                conversationId={null}
+                projectId={project}
+                revision={attach.uploaded}
+              />
+            </div>
+          )}
           {liveConversationId !== null && (
             <div className="mb-2 space-y-2">
               {/* The spec above the picture, deliberately. The conversation is
@@ -613,7 +624,10 @@ export function ChatView({
                   picture: the spec is the truth, the attachments are the
                   evidence behind it, and the render is the consequence.
                   Renders nothing until something is attached. */}
-              <AttachmentPanel conversationId={liveConversationId} revision={partRevision} />
+              <AttachmentPanel
+                conversationId={liveConversationId}
+                revision={partRevision + attach.uploaded}
+              />
               {/* What the assistant suggested remembering about the project and has
                   not been told yet. Renders nothing unless there is one waiting. */}
               {project && <MemoryProposals projectId={project} revision={partRevision} />}

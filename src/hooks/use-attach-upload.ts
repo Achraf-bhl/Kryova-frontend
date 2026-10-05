@@ -29,6 +29,9 @@ export function useAttachUpload({
 }: UseAttachUploadOptions) {
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped after each document lands, so the attachment panel re-lists and the user sees what
+  // was read before sending a word about it (ROAD_TO_10 8.9).
+  const [uploaded, setUploaded] = useState(0);
 
   const upload = useCallback(
     async (file: File): Promise<void> => {
@@ -65,6 +68,7 @@ export function useAttachUpload({
         );
       } finally {
         setProgress(null);
+        setUploaded((count) => count + 1);
       }
     },
     [projectId, conversationId, onAttached],
@@ -86,5 +90,5 @@ export function useAttachUpload({
     [upload],
   );
 
-  return { upload, uploadAll, progress, error, busy: progress !== null };
+  return { upload, uploadAll, progress, error, busy: progress !== null, uploaded };
 }

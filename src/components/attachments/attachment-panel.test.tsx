@@ -191,3 +191,25 @@ describe("AttachmentPanel", () => {
     expect(await screen.findByText(/revision mark/)).toBeInTheDocument();
   });
 });
+
+describe("AttachmentPanel before the first turn (8.9)", () => {
+  it("lists the project's unattached files when there is no conversation yet", async () => {
+    const list = vi
+      .spyOn(api, "listAttachments")
+      .mockResolvedValue(listing(attachment({ filename: "dropped.pdf", conversation_id: null })));
+
+    render(<AttachmentPanel conversationId={null} projectId="proj-1" />);
+
+    expect(await screen.findByText("dropped.pdf")).toBeInTheDocument();
+    expect(list).toHaveBeenCalledWith(null, { projectId: "proj-1" });
+  });
+
+  it("asks about nothing when it has neither a conversation nor a project", async () => {
+    const list = vi.spyOn(api, "listAttachments").mockResolvedValue(listing(attachment()));
+
+    const { container } = render(<AttachmentPanel conversationId={null} />);
+
+    expect(list).not.toHaveBeenCalled();
+    expect(container).toBeEmptyDOMElement();
+  });
+});

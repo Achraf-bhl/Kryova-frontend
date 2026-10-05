@@ -417,9 +417,16 @@ export const api = {
    * that omitted the STEP file somebody dropped in would leave them wondering
    * whether it uploaded at all.
    */
-  listAttachments: (conversationId?: string | null) => {
-    const suffix = conversationId ? `?conversation_id=${encodeURIComponent(conversationId)}` : "";
-    return request<AttachmentPage>(`/attachments${suffix}`);
+  listAttachments: (conversationId?: string | null, options?: { projectId?: string | null }) => {
+    // A conversation wins. With none yet, `projectId` lists the files dropped before the
+    // first turn adopts them (ROAD_TO_10 8.9) — so the user sees what was read before the
+    // agent does.
+    const query = conversationId
+      ? `?conversation_id=${encodeURIComponent(conversationId)}`
+      : options?.projectId
+        ? `?unattached_project_id=${encodeURIComponent(options.projectId)}`
+        : "";
+    return request<AttachmentPage>(`/attachments${query}`);
   },
 
   /**

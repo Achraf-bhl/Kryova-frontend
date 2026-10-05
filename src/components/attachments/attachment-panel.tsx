@@ -43,19 +43,28 @@ type Loaded =
   | { kind: "failed"; message: string };
 
 export interface AttachmentPanelProps {
-  conversationId: string;
+  /** Null in a chat with no first turn yet; then `projectId` says which files to list. */
+  conversationId: string | null;
+  projectId?: string | null;
   /** Bumped by the caller when something may have been attached. */
   revision?: number;
 }
 
-export function AttachmentPanel({ conversationId, revision = 0 }: AttachmentPanelProps) {
+export function AttachmentPanel({
+  conversationId,
+  projectId = null,
+  revision = 0,
+}: AttachmentPanelProps) {
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
   const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
+    // With neither a conversation nor a project there is nothing to ask about, and asking
+    // with no filter would list every file the account has ever attached.
+    if (!conversationId && !projectId) return;
     let cancelled = false;
     api
-      .listAttachments(conversationId)
+      .listAttachments(conversationId, { projectId })
       .then((page) => {
         if (!cancelled) setLoaded({ kind: "ready", items: page.items });
       })
@@ -70,7 +79,7 @@ export function AttachmentPanel({ conversationId, revision = 0 }: AttachmentPane
     return () => {
       cancelled = true;
     };
-  }, [conversationId, revision]);
+  }, [conversationId, projectId, revision]);
 
   if (loaded.kind === "loading") return null;
   if (loaded.kind === "failed") {
