@@ -4,6 +4,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { AiBudgetBanner } from "@/components/ai-budget-banner";
 import { DesktopBridge } from "@/components/desktop-bridge";
 import { PlatformBanner } from "@/components/platform-banner";
+import { GlobalShortcuts } from "@/components/shell/global-shortcuts";
 import { fetchConversationsSafe, fetchCurrentUser } from "@/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar user={user} initialConversations={conversations} />
+      <GlobalShortcuts />
       {/* `min-w-0` so a long code block in a chat message cannot widen the flex
           child and push the sidebar off-screen. */}
       <main className="min-w-0 flex-1 overflow-y-auto pt-14 md:pt-0">

@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { activityLabel, AgentStepList } from "@/components/agent-step-list";
 import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { CheckpointsMenu } from "@/components/chat/checkpoints-menu";
 import { Composer } from "@/components/chat/composer";
+import { matchShortcut } from "@/lib/shortcuts";
 import { explainStop } from "@/lib/stop-reason";
 import { UsageMeter } from "@/components/chat/usage-meter";
 import { CopyButton } from "@/components/chat/copy-button";
@@ -187,6 +188,21 @@ export function ChatView({
     onProjectCreated: setProject,
     onTurnFinished: notifyConversationsChanged,
   });
+
+  // Esc stops a running turn (8.7) — the same polite stop as the button, so the first
+  // press ends it at the next step and a second cuts the stream. An open dialog marks its
+  // own Esc handled (`defaultPrevented`), and a field with an open picker keeps its Esc.
+  useEffect(() => {
+    if (!busy) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || matchShortcut(event) !== "stop") return;
+      if (document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      stop();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [busy, stop]);
 
   const catia = useCatiaStatus(liveConversationId);
   // One upload controller for both ways in — the pill and the composer's drop

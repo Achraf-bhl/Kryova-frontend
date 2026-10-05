@@ -140,6 +140,7 @@ export function Composer({
         onKeyDown={(event) => {
           // `isComposing` guards IME input: mid-composition Enter commits a
           // candidate word and must not send the message.
+          // Plain Enter and ⌘/Ctrl+Enter both send (8.7); Shift+Enter breaks the line.
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
             event.preventDefault();
             if (value.trim() && !busy) onSubmit();
