@@ -7,6 +7,7 @@ import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { activityLabel, AgentStepList } from "@/components/agent-step-list";
 import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
+import { CheckpointsMenu } from "@/components/chat/checkpoints-menu";
 import { Composer } from "@/components/chat/composer";
 import { CopyButton } from "@/components/chat/copy-button";
 import { ContinuePrompt } from "@/components/chat/continue-prompt";
@@ -34,6 +35,7 @@ import { api } from "@/lib/api-client";
 import { notifyConversationsChanged } from "@/lib/conversation-events";
 import { resumeNotice } from "@/lib/conversation-resume";
 import { kernelPartState } from "@/lib/kernel-render";
+import { isLocalKernel } from "@/types/catia";
 import { branchPointAt, branchPointBefore, lastTypedIndex } from "@/lib/conversation-transcript";
 import type { Turn } from "@/lib/conversation-transcript";
 import { toPlainText } from "@/lib/markdown";
@@ -196,6 +198,10 @@ export function ChatView({
 
   const catiaDocument =
     catia.status?.document?.doc_name ?? (liveConversationId === conversationId ? boundDocument : null);
+  // A rollback means something only where `catia_restore` exists: a seat holding a bound
+  // document. The open kernel has no restore, so it is not offered a button that cannot work.
+  const canRollBack =
+    Boolean(catiaDocument) && catia.status?.connected === true && !isLocalKernel(catia.status);
 
   // The open kernel's answer to "the user sees what the agent sees". On a seat
   // the picture arrives inside a tool result and is drawn in the step row; here
@@ -332,10 +338,15 @@ export function ChatView({
               {catiaDocument}
             </span>
           )}
+          {canRollBack && liveConversationId && (
+            <div className="ml-auto">
+              <CheckpointsMenu conversationId={liveConversationId} />
+            </div>
+          )}
           {project && (
             <Link
               href={`/dashboard/projects/${project}`}
-              className="ml-auto shrink-0 text-xs text-muted underline-offset-2 hover:text-accent hover:underline"
+              className={`${canRollBack && liveConversationId ? "" : "ml-auto "}shrink-0 text-xs text-muted underline-offset-2 hover:text-accent hover:underline`}
             >
               Open project
             </Link>

@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 
+import { CheckpointTimeline } from "@/components/catia/checkpoint-timeline";
 import { useCatiaStatus } from "@/hooks/use-catia-status";
-import type { CatiaConnectionState } from "@/types/catia";
+import type { CatiaConnectionState, CatiaStatusOnline } from "@/types/catia";
 import { isLocalKernel } from "@/types/catia";
 
 const DOT: Record<CatiaConnectionState, string> = {
@@ -25,6 +26,43 @@ function humanEvent(name: string): string {
 }
 
 /**
+ * CATIA's interface language is chosen at install time on the workstation and shown as the
+ * two letters it reports. Empty is normal (the daemon could not tell), and is said as such
+ * rather than left blank: a blank reads as a missing value, and here it is a real answer.
+ */
+function languageLabel(code: string): string {
+  return code ? code.toUpperCase() : "not reported";
+}
+
+/** The facts about the connected seat that decide what the assistant can do there. */
+function SeatFacts({ seat }: { seat: CatiaStatusOnline }) {
+  const rows: Array<[string, string]> = [
+    ["Workstation", seat.hostname ? `${seat.device_name} (${seat.hostname})` : seat.device_name],
+    ["CATIA", seat.mock ? `${seat.catia_version} · simulated` : seat.catia_version],
+    ["Interface language", languageLabel(seat.ui_language)],
+    ["Document", seat.document?.doc_name ?? "none open for this conversation"],
+    [
+      "Queue",
+      seat.queue_depth === 0
+        ? "idle"
+        : `${seat.queue_depth} operation${seat.queue_depth === 1 ? "" : "s"} waiting`,
+    ],
+  ];
+  return (
+    <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 border-t border-border px-4 py-3 text-xs">
+      {rows.map(([name, value]) => (
+        <div key={name} className="contents">
+          <dt className="text-muted">{name}</dt>
+          <dd className="min-w-0 truncate font-mono text-accent" title={value}>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/**
  * CATIA bridge state, as a panel.
  *
  * Rewritten against the real backend endpoints: the previous version polled
@@ -36,8 +74,8 @@ function humanEvent(name: string): string {
  * this panel is the fuller read (which workstation, what it just did) for the
  * project page and settings.
  */
-export function CatiaBridgePanel() {
-  const { state, status, detail, events } = useCatiaStatus();
+export function CatiaBridgePanel({ conversationId }: { conversationId?: string | null } = {}) {
+  const { state, status, detail, events } = useCatiaStatus(conversationId);
 
   return (
     <div className="k-panel">
@@ -72,6 +110,19 @@ export function CatiaBridgePanel() {
       <p className="px-4 py-3 text-sm text-muted" aria-live="polite">
         {detail}
       </p>
+
+      {status?.connected && !isLocalKernel(status) && <SeatFacts seat={status} />}
+
+      {/* The way back (ROAD_TO_10 5.7). Only where a conversation is named and a seat — not the
+          open kernel, which has no restore — is what builds. */}
+      {conversationId && state === "connected" && !isLocalKernel(status) && (
+        <div className="border-t border-border">
+          <h3 className="px-4 pt-3 text-xs font-medium uppercase tracking-wide text-muted">
+            Checkpoints
+          </h3>
+          <CheckpointTimeline conversationId={conversationId} />
+        </div>
+      )}
 
       {events.length > 0 && (
         <ul className="k-scroll max-h-40 overflow-y-auto border-t border-border px-4 py-2">

@@ -289,6 +289,63 @@ describe("conversation search, pin, branch and rewind (ROAD_TO_10 2.5 and 2.6)",
   });
 });
 
+describe("checkpoint, approval and restore calls (ROAD_TO_10 5.7)", () => {
+  const lastCall = () => {
+    const [url, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+    return { url: String(url), init: init as RequestInit };
+  };
+
+  it("lists a conversation's checkpoints with a GET, the id encoded", async () => {
+    mockFetch.mockResolvedValue(ok([]));
+
+    await api.listCatiaCheckpoints("c/1");
+
+    expect(lastCall().url).toContain("/catia/conversations/c%2F1/checkpoints");
+    expect(lastCall().init.method ?? "GET").toBe("GET");
+  });
+
+  it("asks for an approval of `catia_restore`, bound to the conversation and checkpoint", async () => {
+    mockFetch.mockResolvedValue(ok({ approval_token: "t", expires_in_seconds: 300 }));
+
+    await api.approveCatiaRestore("c-1", "cp-9");
+
+    const { url, init } = lastCall();
+    expect(url).toContain("/catia/approvals");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      tool: "catia_restore",
+      conversation_id: "c-1",
+      checkpoint_id: "cp-9",
+    });
+    expect(new Headers(init.headers).get("x-csrf-token")).toBe("test-csrf");
+  });
+
+  it("sends the restore with the token in the body, never in the URL", async () => {
+    mockFetch.mockResolvedValue(ok({ restored_checkpoint_id: "cp-9", label: "x", message: "m" }));
+
+    await api.restoreCatiaCheckpoint("c-1", "cp-9", "1700000000.sig");
+
+    const { url, init } = lastCall();
+    expect(url).toContain("/catia/conversations/c-1/restore");
+    expect(url).not.toContain("1700000000");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      checkpoint_id: "cp-9",
+      approval_token: "1700000000.sig",
+    });
+    expect(new Headers(init.headers).get("x-csrf-token")).toBe("test-csrf");
+  });
+
+  it("hands back the server's refusal in words", async () => {
+    mockFetch.mockResolvedValue(fail(403, "The approval expired before the operation ran."));
+
+    await expect(api.restoreCatiaCheckpoint("c-1", "cp-9", "old")).rejects.toMatchObject({
+      status: 403,
+      message: "The approval expired before the operation ran.",
+    });
+  });
+});
+
 describe("project memory calls (ROAD_TO_10 2.7)", () => {
   const lastCall = () => {
     const [url, init] = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];

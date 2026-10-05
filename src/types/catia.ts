@@ -177,3 +177,26 @@ export interface CatiaEvent {
 
 /** How the UI describes the bridge right now. */
 export type CatiaConnectionState = "connecting" | "connected" | "offline" | "unavailable";
+
+/** One row of `GET /catia/conversations/{id}/checkpoints`, newest first. */
+export interface CatiaCheckpoint {
+  id: string;
+  label: string;
+  size_bytes: number | null;
+  /** False when the only copy is on the workstation, which is a weaker promise. */
+  stored_in_cloud: boolean;
+  created_at: string;
+}
+
+/** `POST /catia/approvals`. Signed for one tool, one conversation and one checkpoint. */
+export interface CatiaApproval {
+  approval_token: string;
+  expires_in_seconds: number;
+}
+
+/** `POST /catia/conversations/{id}/restore`. */
+export interface CatiaRestoreResult {
+  restored_checkpoint_id: string;
+  label: string;
+  message: string;
+}

@@ -53,7 +53,14 @@ import type {
   VerificationStatus,
 } from "@/types/api";
 import { rateLimitMessage, retryAfterSeconds } from "@/lib/rate-limit";
-import type { CatiaDevice, CatiaDeviceCreated, CatiaStatus } from "@/types/catia";
+import type {
+  CatiaApproval,
+  CatiaCheckpoint,
+  CatiaDevice,
+  CatiaDeviceCreated,
+  CatiaRestoreResult,
+  CatiaStatus,
+} from "@/types/catia";
 import type {
   BranchResult,
   ConversationDetail,
@@ -883,6 +890,36 @@ export const api = {
     }),
   revokeCatiaDevice: (deviceId: string) =>
     mutatingRequest<void>(`/catia/devices/${deviceId}`, { method: "DELETE" }),
+  /** The restore points of a conversation's document, newest first (ROAD_TO_10 5.7). */
+  listCatiaCheckpoints: (conversationId: string) =>
+    request<CatiaCheckpoint[]>(
+      `/catia/conversations/${encodeURIComponent(conversationId)}/checkpoints`,
+    ),
+  /**
+   * Step one of a rollback: the user has confirmed, so ask the server to sign it. The token
+   * is bound to this conversation and checkpoint and expires in minutes, so it is minted at
+   * the moment of the click and never stored.
+   */
+  approveCatiaRestore: (conversationId: string, checkpointId: string) =>
+    mutatingRequest<CatiaApproval>("/catia/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tool: "catia_restore",
+        conversation_id: conversationId,
+        checkpoint_id: checkpointId,
+      }),
+    }),
+  /** Step two: run the approved rollback. The server verifies the token again. */
+  restoreCatiaCheckpoint: (conversationId: string, checkpointId: string, approvalToken: string) =>
+    mutatingRequest<CatiaRestoreResult>(
+      `/catia/conversations/${encodeURIComponent(conversationId)}/restore`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkpoint_id: checkpointId, approval_token: approvalToken }),
+      },
+    ),
 
   // -- media -----------------------------------------------------------------
 
