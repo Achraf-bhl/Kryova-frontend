@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 
+import { CrashReportButton } from "@/components/crash-report-button";
 import { ErrorDetail } from "@/components/error-boundary";
 import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/ui/page-shell";
@@ -34,6 +35,12 @@ export default function DashboardError({ error, reset }: DashboardErrorProps) {
         <ErrorDetail error={error} />
         <div className="mt-6">
           <Button onClick={reset}>Try again</Button>
+        </div>
+        <div className="mt-3">
+          <CrashReportButton
+            error={{ message: error.message, digest: error.digest }}
+            route={typeof window === "undefined" ? "/dashboard" : window.location.pathname}
+          />
         </div>
       </div>
     </PageShell>

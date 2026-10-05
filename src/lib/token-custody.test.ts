@@ -44,6 +44,7 @@ const FORBIDDEN = [
  */
 const NOT_CREDENTIALS: Record<string, string> = {
   "src/lib/theme.ts": "the theme preference, read before first paint",
+  "src/lib/crash-report.ts": "the one word 'never': stop offering to send a crash report",
 };
 
 function sourceFiles(directory: string): string[] {
@@ -82,7 +83,14 @@ describe("token custody", () => {
     const source = readFileSync(join(SOURCE_ROOT, "lib/theme.ts"), "utf8");
     expect(source).toMatch(/THEME_STORAGE_KEY\s*=\s*"kryova-theme"/);
     expect(source).not.toMatch(/access.?token|refresh|password|secret|credential|bearer|csrf/i);
-    expect(Object.keys(NOT_CREDENTIALS)).toEqual(["src/lib/theme.ts"]);
+    expect(Object.keys(NOT_CREDENTIALS)).toEqual(["src/lib/theme.ts", "src/lib/crash-report.ts"]);
+  });
+
+  it("lets the crash-report preference use storage, and only that one key", () => {
+    const source = readFileSync(join(SOURCE_ROOT, "lib/crash-report.ts"), "utf8");
+    expect(source).toMatch(/CONSENT_KEY\s*=\s*"kryova\.crash-report"/);
+    expect(source.match(/setItem\(/g)).toHaveLength(1); // the one write: "never"
+    expect(source).not.toMatch(/access.?token|refresh|password|secret|credential|bearer|csrf/i);
   });
 
   it("finds source files at all, so an empty pass cannot be a vacuous one", () => {
