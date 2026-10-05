@@ -1,49 +1,60 @@
-# Tauri shell compile check -- and the record of why there is no release job here.
+# The desktop installer's pipeline (ROAD_TO_10 4.9): build it, install what was built on a
+# machine that has never seen Kryova, start it, ask it whether it is well, uninstall it, and
+# only then -- and only if it was signed -- hand it to a person to publish.
 #
-# THE DECISION (2026-09-06): a tagged release must NOT build and publish the MSI
-# yet. Not "not worth it" -- it would publish a broken installer. Three reasons,
-# each checkable in this repo:
+# WHAT CHANGED, 2026-10-05. This file used to be a type-check and the record of why there was
+# no release job. The three reasons it gave are fixed in the tree and each has a test:
 #
-#  1. The installer bakes absolute paths of the build machine into the binary.
-#     `src-tauri/src/lib.rs` resolves the two checkouts through
-#     `option_env!("KRYOVA_FRONTEND_DIR")` / `option_env!("KRYOVA_BACKEND_DIR")`
-#     and node through `option_env!("KRYOVA_NODE")`, all fixed at *compile*
-#     time by `scripts/desktop-build.mjs`. An MSI built on a runner therefore
-#     ships pointing at `D:\a\Kryova-frontend\...` and a runner-local node. On a
-#     customer's machine those paths do not exist, so the app starts no backend
-#     and no frontend, waits out its 90-second timeout, and shows a window that
-#     failed to load -- a failure whose message names none of this.
-#  2. `src-tauri/tauri.conf.json` sets `frontendDist: "http://localhost:3000"`.
-#     The desktop app is a shell that launches the dev server from a checkout on
-#     disk; it does not bundle a static build. A public release artefact needs a
-#     bundled frontend and a packaged backend first -- that is master plan P9.2
-#     (backend images) and P9.4, not a line in a workflow.
-#  3. Nothing has ever installed the MSI and confirmed the app starts from it.
-#     The master plan's P7 row says so in as many words: "Built is not
-#     installed". Publishing an artefact whose only evidence is that the build
-#     command exited zero is exactly the "green on a suite nobody ran" failure
-#     this project exists to refuse.
+#  1. The binary baked in the build machine's checkout paths.  `desktop-build.mjs --bundled`
+#     bakes none (`src/lib/desktop-bundle.test.ts`), and the shell finds what it runs beside
+#     its own executable (`src-tauri/src/layout.rs`).
+#  2. The app was a shell around a dev server on disk.  `scripts/stage-desktop.mjs` assembles
+#     the frontend, Node, a relocatable CPython with the backend's wheels, and PostgreSQL into
+#     the installer.
+#  3. Nothing had ever installed the MSI and confirmed it started.  The `install-test` job is
+#     that, run on a runner that has none of the build's tools, on every build.
 #
-# There is also no code signing certificate and no `latest.json`, so even a
-# correct MSI would trip SmartScreen and could not auto-update. Those are P9.4
-# and P7.1 and they need secrets nobody should invent here (see the report).
+# WHAT THIS FILE STILL DOES NOT KNOW. It has not run. Nothing here has been executed on a
+# GitHub runner or on any Windows machine, and the first run is expected to find something --
+# a path, a flag, a service the runner does not have. The steps are written so that when one
+# fails the logs are uploaded and the failure names the step, rather than so that they are
+# certain to pass. `docs/WINDOWS_VERIFICATION.md` THE QUEUE G7 holds the claims the first
+# green run would settle.
 #
-# WHAT THIS FILE DOES INSTEAD: type-checks the Rust half on Windows so a change
-# to `src-tauri/` cannot rot unnoticed between the rare desktop builds. It is
-# `workflow_dispatch` only -- it gates nothing, it produces no artefact, and it
-# makes no claim about installability. Turn it into a release pipeline when 1-3
-# above are actually fixed, not before.
+#   * SIGNING is the owner's. Without a certificate the MSI is built, installed and tested
+#     unsigned, and the `publish` job refuses to run. Signing is configured by environment
+#     (`scripts/desktop-config.mjs`): a thumbprint of a certificate in the runner's store, or a
+#     vendor's command. A certificate issued today lives in a hardware module or a cloud
+#     service, so a `.pfx` secret is only an option for an older one -- `Kryova-backend/docs/DESKTOP_RELEASE.md`.
+#   * The UPDATE FEED is the owner's. `latest.json` carries a signature made offline with the
+#     updater key, which never reaches CI, so this pipeline cannot publish an update. It makes a
+#     DRAFT release holding the signed MSI and its SHA-256; a person signs the artefact with
+#     `tauri signer sign`, runs `scripts/make-latest-json.mjs`, uploads, and publishes the draft.
+#   * The BACKEND is a second repository. It is checked out beside this one because
+#     `stage-desktop.mjs` stages its code and wheels; the commit used is printed in the build's
+#     summary, because "which backend is in this installer" must be answerable later.
 #
-# Locally, the identical check:
+# Locally, the compile check alone (what the first job runs):
 #
 #   cd src-tauri && cargo check --locked
-#
-# (12.6 s warm on the Windows seat, rust 1.98.)
 
-name: Desktop shell
+name: Desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      channel:
+        description: The update channel this build belongs to
+        type: choice
+        options: [beta, stable]
+        default: beta
+      backend_ref:
+        description: The backend branch, tag or commit to bundle
+        default: main
+      publish:
+        description: Make a DRAFT release from a signed, install-tested build
+        type: boolean
+        default: false
 
 concurrency:
   group: desktop-${{ github.ref }}
@@ -84,3 +95,339 @@ jobs:
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --locked
+
+  build:
+    name: Build the MSI (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 120
+    outputs:
+      signed: ${{ steps.sign.outputs.signed }}
+      version: ${{ steps.msi.outputs.version }}
+      sha256: ${{ steps.msi.outputs.sha256 }}
+      msi: ${{ steps.msi.outputs.name }}
+    env:
+      KRYOVA_UPDATE_CHANNEL: ${{ inputs.channel }}
+      # Both or neither (`desktop-config.mjs` refuses one alone). Unset, the build has no
+      # updater at all, which is the honest shape of an installer nobody can update yet.
+      KRYOVA_UPDATER_PUBKEY: ${{ vars.KRYOVA_UPDATER_PUBKEY }}
+      KRYOVA_UPDATE_BASE_URL: ${{ vars.KRYOVA_UPDATE_BASE_URL }}
+      # The server components call the API from the Next process; the browser bundle has
+      # this inlined at build time. 127.0.0.1, not localhost (CLAUDE.md, Driving the GUI 2a).
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+
+    steps:
+      # Both repositories sit side by side, as on a developer's machine, so the build's own
+      # default for the backend's location (`../Kryova-backend`) is the right one.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: Kryova-frontend
+
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: Achraf-bhl/Kryova-backend
+          ref: ${{ inputs.backend_ref }}
+          path: Kryova-backend
+          # A private sibling repository cannot be read with this repository's own token.
+          # Set the secret to a read-only token for it; without one this falls back to the
+          # default and fails at checkout with a message that names the repository.
+          token: ${{ secrets.KRYOVA_BACKEND_TOKEN || github.token }}
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version-file: Kryova-frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: Kryova-frontend/package-lock.json
+
+      # `stage_desktop_backend.py` is standard-library only; it runs the *bundled* interpreter
+      # for everything that installs a wheel.
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        working-directory: Kryova-frontend
+        run: npm ci
+
+      - name: Runtime dependencies
+        working-directory: Kryova-frontend
+        run: node scripts/check-dependencies.mjs
+
+      - name: What is being built
+        shell: pwsh
+        run: |
+          $backend = git -C Kryova-backend rev-parse HEAD
+          $frontend = git -C Kryova-frontend rev-parse HEAD
+          "frontend $frontend" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          "backend  $backend"  | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          "channel  ${{ inputs.channel }}" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      # A certificate in the runner's store, named by thumbprint. Skipped -- and the build
+      # says so -- when no secret is configured: an unsigned MSI is still worth building and
+      # installing, and it must never be published.
+      - name: Sign (when a certificate is configured)
+        id: sign
+        shell: pwsh
+        env:
+          PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          SIGN_COMMAND: ${{ vars.KRYOVA_SIGN_COMMAND }}
+          TIMESTAMP_URL: ${{ vars.KRYOVA_SIGN_TIMESTAMP_URL }}
+        run: |
+          if ($env:SIGN_COMMAND) {
+            "KRYOVA_SIGN_COMMAND=$env:SIGN_COMMAND" >> $env:GITHUB_ENV
+            "signed=true" >> $env:GITHUB_OUTPUT
+            "Signing with the configured command." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          }
+          elseif ($env:PFX_BASE64) {
+            if (-not $env:TIMESTAMP_URL) { throw "A certificate is configured but KRYOVA_SIGN_TIMESTAMP_URL is not. A signature with no timestamp dies with the certificate." }
+            $pfx = Join-Path $env:RUNNER_TEMP "kryova-signing.pfx"
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_BASE64))
+            $password = ConvertTo-SecureString $env:PFX_PASSWORD -AsPlainText -Force
+            $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            Remove-Item $pfx -Force
+            "KRYOVA_SIGN_THUMBPRINT=$($cert.Thumbprint)" >> $env:GITHUB_ENV
+            "KRYOVA_SIGN_TIMESTAMP_URL=$env:TIMESTAMP_URL" >> $env:GITHUB_ENV
+            "signed=true" >> $env:GITHUB_OUTPUT
+            "Signing with certificate $($cert.Thumbprint) ($($cert.Subject))." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          }
+          else {
+            "signed=false" >> $env:GITHUB_OUTPUT
+            "NOT SIGNED: no certificate is configured. This MSI will be installed and tested, and cannot be published." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          }
+
+      # Stages the bundle (Node, CPython + wheels, PostgreSQL, the frontend, the backend) and
+      # builds the installer around it. Every download is checked against a pinned SHA-256.
+      - name: Build the installer
+        working-directory: Kryova-frontend
+        run: node scripts/desktop-build.mjs --bundled --bundles msi
+
+      - name: Name the artefact
+        id: msi
+        shell: pwsh
+        working-directory: Kryova-frontend
+        run: |
+          $msi = Get-ChildItem -Path src-tauri/target/release/bundle/msi -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "The build finished and left no .msi under src-tauri/target/release/bundle/msi." }
+          $hash = (Get-FileHash $msi.FullName -Algorithm SHA256).Hash.ToLower()
+          $version = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          "name=$($msi.Name)" >> $env:GITHUB_OUTPUT
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "$hash  $($msi.Name)  ($([math]::Round($msi.Length / 1MB)) MB)" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          Copy-Item $msi.FullName $env:RUNNER_TEMP
+          "$hash  $($msi.Name)" | Out-File -Encoding ascii (Join-Path $env:RUNNER_TEMP "$($msi.Name).sha256")
+
+      - name: Verify the signature of what was built
+        if: steps.sign.outputs.signed == 'true'
+        shell: pwsh
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP "${{ steps.msi.outputs.name }}"
+          $signature = Get-AuthenticodeSignature $msi
+          "$($signature.Status): $($signature.StatusMessage)" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          # `UnknownError` is an untrusted root, which a test certificate gives; a missing
+          # signature is the failure this step exists for.
+          if ($signature.Status -eq "NotSigned") { throw "A signing configuration was set and the MSI is not signed." }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: kryova-msi
+          path: |
+            ${{ runner.temp }}/*.msi
+            ${{ runner.temp }}/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  # A second job on a second runner on purpose: the build machine has Node, Python, Rust and a
+  # compiler, and an installed app that quietly used any of them would pass there and fail on
+  # a customer's machine. The runner this job gets has none of Kryova's tools installed.
+  install-test:
+    name: Install, start, health, uninstall (clean Windows)
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      MSI_NAME: ${{ needs.build.outputs.msi }}
+
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: kryova-msi
+          path: ${{ runner.temp }}/msi
+
+      - name: The runner is clean of Kryova's tools
+        shell: pwsh
+        run: |
+          # Not "node is absent" -- the runner image carries one. The claim is narrower and is
+          # the one that matters: nothing of Kryova's is installed, and no Kryova data exists.
+          if (Test-Path "$env:LOCALAPPDATA\Kryova") { throw "A Kryova data folder already exists on this runner; the first-run path would not be tested." }
+          if (Test-Path "$env:ProgramFiles\Kryova") { throw "Kryova is already installed on this runner." }
+          "Clean: no install and no data folder." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: The file is the one that was built
+        shell: pwsh
+        run: |
+          $msi = Join-Path "$env:RUNNER_TEMP\msi" $env:MSI_NAME
+          $hash = (Get-FileHash $msi -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "${{ needs.build.outputs.sha256 }}") { throw "The downloaded MSI hashes to $hash, not ${{ needs.build.outputs.sha256 }}." }
+
+      - name: Install
+        shell: pwsh
+        run: |
+          $msi = Join-Path "$env:RUNNER_TEMP\msi" $env:MSI_NAME
+          $p = Start-Process msiexec.exe -ArgumentList @("/i", "`"$msi`"", "/qn", "/l*v", "`"$env:RUNNER_TEMP\install.log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /i exited $($p.ExitCode); see install.log." }
+          $exe = Get-ChildItem "$env:ProgramFiles\Kryova" -Filter kryova.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "The install succeeded and left no kryova.exe under $env:ProgramFiles\Kryova." }
+          "KRYOVA_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+          "KRYOVA_INSTALL_DIR=$($exe.DirectoryName)" >> $env:GITHUB_ENV
+          # The installed tree is the staged one. A missing file here is the bundle being
+          # incomplete, and names which (`layout.rs`'s required list).
+          $missing = @(
+            "frontend\server.js", "runtime\node\node.exe", "backend\python\python.exe",
+            "backend\app\desktop.py", "postgres\bin\pg_ctl.exe"
+          ) | Where-Object { -not (Test-Path (Join-Path $exe.DirectoryName $_)) }
+          if ($missing) { throw "The installed app is missing: $($missing -join ', ')" }
+          "Installed to $($exe.DirectoryName)" | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      - name: Launch, and wait for the backend and the frontend
+        shell: pwsh
+        run: |
+          $process = Start-Process $env:KRYOVA_EXE -PassThru
+          # First launch: initdb and every migration, on a machine whose antivirus is
+          # scanning a fresh install. The shell itself allows several minutes for this.
+          $deadline = (Get-Date).AddMinutes(12)
+          $backend = $false
+          $frontend = $false
+          while ((Get-Date) -lt $deadline -and -not ($backend -and $frontend)) {
+            if ($process.HasExited) { throw "kryova.exe exited with code $($process.ExitCode) before the servers came up." }
+            try { $r = Invoke-WebRequest "http://127.0.0.1:8000/health" -UseBasicParsing -TimeoutSec 5; $backend = ($r.StatusCode -eq 200) } catch { $backend = $false }
+            try { $r = Invoke-WebRequest "http://127.0.0.1:3000/" -UseBasicParsing -TimeoutSec 5 -MaximumRedirection 0 -ErrorAction SilentlyContinue; $frontend = ($r.StatusCode -lt 500) } catch { $frontend = $false }
+            Start-Sleep -Seconds 3
+          }
+          if (-not $backend) { throw "http://127.0.0.1:8000/health never answered 200 within 12 minutes." }
+          if (-not $frontend) { throw "http://127.0.0.1:3000/ never answered within 12 minutes." }
+          "Backend /health 200 and the frontend answering after $([math]::Round(((Get-Date) - $process.StartTime).TotalSeconds)) s." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+          "KRYOVA_PID=$($process.Id)" >> $env:GITHUB_ENV
+
+      - name: The database exists where the data lives, not in the install
+        shell: pwsh
+        run: |
+          $kryovaHome = Join-Path $env:LOCALAPPDATA "Kryova"
+          foreach ($path in @("pgdata\PG_VERSION", "secrets.json", "media")) {
+            if (-not (Test-Path (Join-Path $kryovaHome $path))) { throw "$path is not under $kryovaHome after the first launch." }
+          }
+          # Nothing written into the install: it is read-only to the person running the app and
+          # replaced wholesale by an upgrade.
+          $stray = Get-ChildItem $env:KRYOVA_INSTALL_DIR -Recurse -Filter "PG_VERSION" -ErrorAction SilentlyContinue
+          if ($stray) { throw "A database was made inside the install directory: $($stray.FullName)" }
+
+      - name: Close the app, and confirm it takes its servers with it
+        shell: pwsh
+        run: |
+          $process = Get-Process -Id $env:KRYOVA_PID -ErrorAction SilentlyContinue
+          if ($process) {
+            [void]$process.CloseMainWindow()
+            if (-not $process.WaitForExit(60000)) {
+              "The window did not close in 60 s; stopping the process." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+          Start-Sleep -Seconds 20
+          $left = Get-CimInstance Win32_Process | Where-Object {
+            $_.ExecutablePath -and $_.ExecutablePath.StartsWith($env:KRYOVA_INSTALL_DIR, [StringComparison]::OrdinalIgnoreCase)
+          }
+          if ($left) {
+            $left | ForEach-Object { "still running: $($_.Name) $($_.ProcessId) $($_.ExecutablePath)" }
+            throw "Closing the app left $($left.Count) of its processes running. Uninstall cannot remove files they hold open."
+          }
+
+      - name: Uninstall, and confirm it is gone
+        shell: pwsh
+        run: |
+          $msi = Join-Path "$env:RUNNER_TEMP\msi" $env:MSI_NAME
+          $p = Start-Process msiexec.exe -ArgumentList @("/x", "`"$msi`"", "/qn", "/l*v", "`"$env:RUNNER_TEMP\uninstall.log`"") -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "msiexec /x exited $($p.ExitCode); see uninstall.log." }
+          # The three places Windows lists an installed program: machine-wide, per-user, and
+          # the 32-bit view of the first.
+          $keys = @(
+            "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+          )
+          $entries = foreach ($key in $keys) {
+            Get-ChildItem $key -ErrorAction SilentlyContinue | ForEach-Object { Get-ItemProperty $_.PSPath } | Where-Object { $_.DisplayName -eq "Kryova" }
+          }
+          if ($entries) { throw "Kryova is still listed as installed in $(@($entries).Count) place(s) after uninstall." }
+          if (Test-Path $env:KRYOVA_EXE) { throw "kryova.exe is still on disk after uninstall." }
+          # An uninstall must not delete somebody's work: the database is the user's, and a
+          # reinstall (or the next version) finds it where it was.
+          if (-not (Test-Path "$env:LOCALAPPDATA\Kryova\pgdata\PG_VERSION")) { throw "Uninstalling removed the user's database." }
+          "Uninstalled: no entries, no executable, and the user's data is intact." | Tee-Object -Append $env:GITHUB_STEP_SUMMARY
+
+      # The logs are what a first run on a machine nobody can sit at is read from.
+      - name: Collect logs
+        if: always()
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "kryova-logs"
+          New-Item -ItemType Directory -Force $out | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\install.log", "$env:RUNNER_TEMP\uninstall.log" $out -ErrorAction SilentlyContinue
+          Get-ChildItem "$env:LOCALAPPDATA\Kryova\logs" -ErrorAction SilentlyContinue | Copy-Item -Destination $out -ErrorAction SilentlyContinue
+          Copy-Item "$env:LOCALAPPDATA\Kryova\pgdata.log" $out -ErrorAction SilentlyContinue
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: kryova-install-logs
+          path: ${{ runner.temp }}/kryova-logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # A draft, never a publication. What a customer's app trusts is the updater key, which is
+  # held offline and signs the artefact by hand; this job cannot do that and does not pretend
+  # to. It refuses an unsigned build, because the point of signing is that nothing unsigned
+  # reaches a person's machine from here.
+  publish:
+    name: Draft release
+    needs: [build, install-test]
+    if: inputs.publish && needs.build.outputs.signed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: kryova-msi
+          path: msi
+
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          PRE=""
+          if [ "$CHANNEL" = "beta" ]; then PRE="--prerelease"; fi
+          gh release create "v$VERSION" msi/* --repo "$GITHUB_REPOSITORY" --draft $PRE \
+            --title "Kryova $VERSION ($CHANNEL)" \
+            --notes "Signed and install-tested (installed, started, answered /health, uninstalled) on a clean Windows runner. SHA-256 ${{ needs.build.outputs.sha256 }}. Not yet published: sign the artefact with the updater key, build latest.json with scripts/make-latest-json.mjs and upload it, then publish this draft."
+
+  # Said out loud in the run, because a skipped job reads as success.
+  not-published:
+    name: Not published
+    needs: [build, install-test]
+    if: ${{ always() && needs.install-test.result == 'success' && !(inputs.publish && needs.build.outputs.signed == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Why nothing was published
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          SIGNED: ${{ needs.build.outputs.signed }}
+        run: |
+          {
+            echo "### Not published"
+            if [ "$SIGNED" != "true" ]; then echo "- The MSI is **unsigned** (no certificate is configured). It was installed and tested, and is not offered to anyone."; fi
+            if [ "$PUBLISH" != "true" ]; then echo "- \`publish\` was not ticked."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
