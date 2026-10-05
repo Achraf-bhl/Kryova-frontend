@@ -9,6 +9,7 @@ import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { CheckpointsMenu } from "@/components/chat/checkpoints-menu";
 import { Composer } from "@/components/chat/composer";
+import { explainStop } from "@/lib/stop-reason";
 import { UsageMeter } from "@/components/chat/usage-meter";
 import { CopyButton } from "@/components/chat/copy-button";
 import { ContinuePrompt } from "@/components/chat/continue-prompt";
@@ -453,73 +454,29 @@ export function ChatView({
                       </div>
                     </>
                   )}
-                  {turn.truncated && (
-                    <p
-                      className={
-                        // A turn the *user* stopped is not a warning. Nothing
-                        // went wrong, they got what they asked for, and amber
-                        // would make the product look as though it had failed
-                        // every time somebody changed their mind.
-                        //
-                        // `awaiting_approval` is muted for the same reason: a
-                        // checkpoint stopping the turn is the gate doing its
-                        // job, and painting a correct sign-off amber teaches
-                        // people that gates are a malfunction. `needs_input`
-                        // stays amber — it is reached by repeated failure, and
-                        // something really did go wrong on the way there.
-                        //
-                        // `task_boundary` is the agent pacing itself on
-                        // purpose and `provider_busy` is somebody else's
-                        // queue; neither is the user's or the agent's fault.
-                        turn.stopReason === "cancelled" ||
-                        turn.stopReason === "awaiting_approval" ||
-                        turn.stopReason === "task_boundary" ||
-                        turn.stopReason === "provider_busy"
-                          ? "text-xs text-muted"
-                          : "text-xs text-warning"
-                      }
-                    >
-                      {/* Two different endings, two different remedies, and
-                          saying the wrong one costs the user the next turn as
-                          well. Measured on ladder prompt PRO1, 2026-09-08: the
-                          agent was stopped at step 31 of 60 for re-issuing a
-                          call the tool layer had already refused, and this line
-                          told the user it had run out of rounds and to ask for
-                          one thing at a time — half the budget was unspent, and
-                          narrowing the request would not have stopped the
-                          repeat.
-
-                          "tool rounds" in the budget case matches the ceiling
-                          the panel warns about on the way there — the same cap,
-                          named the same way, rather than "steps", which the
-                          panel uses for the rows in the list. */}
-                      {turn.stopReason === "cancelled"
-                        ? "You stopped this turn. Everything above really ran — say what to do next and it carries on from there."
-                        : turn.stopReason === "repeated_calls"
-                          ? "The agent stopped because it kept repeating a call that had already been refused. Tell it what to do differently — it keeps everything it built."
-                          : turn.stopReason === "needs_input"
-                            ? // Since 2026-09-22 the question is a prompt with
-                              // options below this line, so pointing the reader
-                              // at "the end of its answer" would send them past
-                              // the thing they are looking for. The fallback
-                              // wording stays honest when no prompt arrived —
-                              // the question is still in the prose either way.
-                              turn.intervention
-                              ? "The agent stopped to ask you something rather than keep retrying. Answer below and it carries on from what is built."
-                              : "The agent stopped to ask you something rather than keep retrying — the question is at the end of its answer. Answer it and it carries on from what is built."
-                            : turn.stopReason === "awaiting_approval"
-                              ? turn.intervention
-                                ? "The agent reached a checkpoint that needs sign-off. Nothing past it has run — decide below, or open it under Approvals."
-                                : "The agent reached a checkpoint that needs sign-off. Nothing past it has run; approve or reject it under Approvals and it carries on from there."
-                              : turn.stopReason === "task_boundary"
-                                ? "The agent stopped at the end of a task because the rest of the plan would not fit in this turn's tool rounds. Everything above ran — press Continue to start the next task."
-                                : turn.stopReason === "provider_busy"
-                                  ? "The model provider stayed too busy to answer after several tries. Nothing was lost — press Continue to try again."
-                                  : turn.nextAction
-                                    ? "The agent used all of its tool rounds for that turn. Everything above ran — press Continue to carry on from what is built."
-                                    : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further."}
-                    </p>
-                  )}
+                  {turn.truncated &&
+                    (() => {
+                      // Wording, tone and the one page-shaped remedy live in
+                      // `lib/stop-reason.ts`, one test per ending. The buttons
+                      // below (decision, Continue) come from the server.
+                      const stop = explainStop(turn.stopReason, {
+                        hasIntervention: Boolean(turn.intervention),
+                        hasNextAction: Boolean(turn.nextAction),
+                      });
+                      return (
+                        <p className={stop.tone === "warning" ? "text-xs text-warning" : "text-xs text-muted"}>
+                          {stop.text}
+                          {stop.link && (
+                            <>
+                              {" "}
+                              <Link href={stop.link.href} className="font-medium underline underline-offset-2">
+                                {stop.link.label}
+                              </Link>
+                            </>
+                          )}
+                        </p>
+                      );
+                    })()}
                   {/* The decision itself, under the answer it interrupted.
                       Below the banner on purpose: the banner says the turn
                       stopped, and this says what to do about it — a prompt
