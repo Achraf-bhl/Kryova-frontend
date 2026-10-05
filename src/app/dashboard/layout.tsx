@@ -2,6 +2,7 @@ import { Sidebar } from "./_components/sidebar";
 
 import { ErrorBoundary } from "@/components/error-boundary";
 import { AiBudgetBanner } from "@/components/ai-budget-banner";
+import { DesktopBridge } from "@/components/desktop-bridge";
 import { PlatformBanner } from "@/components/platform-banner";
 import { fetchConversationsSafe, fetchCurrentUser } from "@/lib/server-api";
 
@@ -33,6 +34,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <PlatformBanner />
         {/* Beside it for the same reason: a spending cap is why the next request fails. */}
         <AiBudgetBanner />
+        {/* Nothing in a browser; in the desktop shell, links and the tray (ROAD_TO_10 4.7). */}
+        <DesktopBridge />
         <ErrorBoundary>{children}</ErrorBoundary>
       </main>
     </div>
