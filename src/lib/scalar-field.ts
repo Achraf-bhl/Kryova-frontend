@@ -84,7 +84,7 @@ export interface Range {
 export const ABSENT: readonly [number, number, number] = [0.62, 0.62, 0.64];
 
 /** One node's value, or `NaN` where nothing was computed. */
-export type Field = readonly number[];
+export type Field = ArrayLike<number>;
 
 /**
  * The magnitude of a three-component result, per node — the bridge from a solve's output
@@ -114,10 +114,18 @@ export function magnitudeField(vectors: readonly (readonly number[])[]): number[
 export function rangeFor(kind: FieldKind, field: Field): Range {
   const fixed = FIXED_RANGES[kind];
   if (fixed !== undefined) return fixed;
-  const measured = field.filter((value) => Number.isFinite(value));
-  if (measured.length === 0) return { min: 0, max: 1, auto: true };
-  const min = Math.min(...measured);
-  const max = Math.max(...measured);
+  // A loop, not `Math.min(...field)`: spreading a few hundred thousand values exceeds the
+  // engine's argument limit and throws RangeError, which is the large-mesh case a result
+  // viewer exists for (the viewer's own index scan says the same).
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < field.length; i++) {
+    const value = field[i];
+    if (!Number.isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+  }
+  if (min === Infinity) return { min: 0, max: 1, auto: true };
   // A constant field has no spread to colour. Widening it by a hair would paint noise
   // across the whole palette; giving it a band keeps everything one colour, which is the
   // truth about a constant field.
@@ -159,6 +167,49 @@ export function ramp(position: number): [number, number, number] {
   return [1, 1 - 4 * (t - 0.75), 0];
 }
 
+/**
+ * The magnitude of a flat xyz array (`[x0, y0, z0, x1, ...]`), per node — the typed-array form
+ * `SurfaceFieldArrays.displacements` has. A node with any non-finite component is `NaN`, as in
+ * `magnitudeField`.
+ */
+export function magnitudeOfFlat(flat: ArrayLike<number>): Float32Array {
+  const count = Math.floor(flat.length / 3);
+  const out = new Float32Array(count);
+  for (let node = 0; node < count; node++) {
+    const x = flat[node * 3];
+    const y = flat[node * 3 + 1];
+    const z = flat[node * 3 + 2];
+    out[node] =
+      Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? Math.hypot(x, y, z) : Number.NaN;
+  }
+  return out;
+}
+
+/** Every node's colour as a flat `Float32Array` (r, g, b per node), ready for a vertex buffer. */
+export function colourBuffer(field: ArrayLike<number>, kind: FieldKind, range: Range): Float32Array {
+  const out = new Float32Array(field.length * 3);
+  for (let node = 0; node < field.length; node++) {
+    const [r, g, b] = colourFor(field[node], range, kind);
+    out[node * 3] = r;
+    out[node * 3 + 1] = g;
+    out[node * 3 + 2] = b;
+  }
+  return out;
+}
+
+/** A CSS gradient of the ramp, left (low) to right (high), so a legend cannot disagree with the picture. */
+export function rampGradientCss(kind: FieldKind, stops = 9): string {
+  const parts: string[] = [];
+  for (let i = 0; i < stops; i++) {
+    const position = i / (stops - 1);
+    // A ramp that runs the other way for this kind is drawn the other way, so the left end
+    // of the bar is always the lowest value.
+    const [r, g, b] = ramp(FIELDS[kind].lowIsBad ? 1 - position : position);
+    parts.push(`rgb(${Math.round(r * 255)} ${Math.round(g * 255)} ${Math.round(b * 255)}) ${Math.round(position * 100)}%`);
+  }
+  return `linear-gradient(to right, ${parts.join(", ")})`;
+}
+
 /** The colour for one node: its ramp position, or `ABSENT` grey when unmeasured. */
 export function colourFor(
   value: number,
@@ -176,8 +227,8 @@ export function colourField(
   range: Range = rangeFor(kind, field),
 ): number[] {
   const out: number[] = [];
-  for (const value of field) {
-    const [r, g, b] = colourFor(value, range, kind);
+  for (let i = 0; i < field.length; i++) {
+    const [r, g, b] = colourFor(field[i], range, kind);
     out.push(r, g, b);
   }
   return out;
@@ -252,7 +303,8 @@ export function legendFor(kind: FieldKind, field: Field, range = rangeFor(kind, 
     { length: steps },
     (_, index) => range.min + ((range.max - range.min) * index) / (steps - 1),
   );
-  const absent = field.filter((value) => !Number.isFinite(value)).length;
+  let absent = 0;
+  for (let i = 0; i < field.length; i++) if (!Number.isFinite(field[i])) absent += 1;
   return {
     label: definition.label,
     unit: definition.unit,

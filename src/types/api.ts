@@ -439,6 +439,17 @@ export function describeProgress(progress: SimulationProgress | null): string {
   return progress.detail ? `${line} (${progress.detail})` : line;
 }
 
+/**
+ * The peak a verdict rests on and which number it is (ROAD_TO_10 8.3). Mirrors
+ * `app/schemas/simulation.py::GoverningRead`; the rule lives in one place on the
+ * server (`StaticResult.governing_peak_mpa`) and the client never recomputes it.
+ */
+export interface Governing {
+  peak_mpa: number;
+  basis: string;
+  factor_of_safety: number;
+}
+
 export interface SimulationRead {
   id: string;
   project_id: string;
@@ -470,6 +481,8 @@ export interface SimulationRead {
    */
   queue_position?: number | null;
   result: StaticResult | null;
+  /** Null when the run has no structural result, or an older one the server cannot read. */
+  governing?: Governing | null;
   fields_media_id: string | null;
   error: string | null;
   created_at: string;
@@ -531,6 +544,8 @@ export interface SimulationCreate {
 export interface StaticResult {
   max_displacement_mm: number;
   max_von_mises_mpa: number;
+  /** Peak at the nodes, where a surface is; null when the solver produced no nodal tensor. */
+  max_von_mises_surface_mpa?: number | null;
   factor_of_safety: number;
   yields: boolean;
   mass_kg: number;

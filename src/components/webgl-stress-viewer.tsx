@@ -1,7 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import {
+  FIELDS,
+  colourBuffer,
+  legendFor,
+  magnitudeOfFlat,
+  probeNode,
+  rampGradientCss,
+  rangeFor,
+  type FieldKind,
+} from "@/lib/scalar-field";
 import { currentTheme, subscribeTheme, viewerBackground } from "@/lib/theme";
 
 import type { SurfaceFieldArrays } from "@/lib/surface-field";
@@ -9,39 +19,30 @@ import type { SurfaceFieldArrays } from "@/lib/surface-field";
 const VERTEX_SHADER = `
 attribute vec3 a_position;
 attribute vec3 a_normal;
-attribute float a_stress;
+attribute vec3 a_color;
 uniform mat4 u_modelView;
 uniform mat4 u_projection;
 varying vec3 v_normal;
-varying float v_stress;
+varying vec3 v_color;
 void main() {
   gl_Position = u_projection * u_modelView * vec4(a_position, 1.0);
   v_normal = normalize(mat3(u_modelView) * a_normal);
-  v_stress = a_stress;
+  v_color = a_color;
 }
 `;
 
 const FRAGMENT_SHADER = `
 precision mediump float;
 varying vec3 v_normal;
-varying float v_stress;
+varying vec3 v_color;
 void main() {
   vec3 lightDir = normalize(vec3(0.4, 0.7, 0.6));
   float diffuse = max(dot(v_normal, lightDir), 0.0);
   float ambient = 0.25;
   float intensity = ambient + (1.0 - ambient) * diffuse;
-
-  // Colour ramp: blue → green → yellow → red
-  float t = clamp(v_stress, 0.0, 1.0);
-  vec3 color;
-  if (t < 0.333) {
-    color = mix(vec3(0.1, 0.2, 0.9), vec3(0.0, 0.8, 0.2), t / 0.333);
-  } else if (t < 0.667) {
-    color = mix(vec3(0.0, 0.8, 0.2), vec3(1.0, 1.0, 0.0), (t - 0.333) / 0.334);
-  } else {
-    color = mix(vec3(1.0, 1.0, 0.0), vec3(0.95, 0.15, 0.1), (t - 0.667) / 0.333);
-  }
-  gl_FragColor = vec4(color * intensity, 1.0);
+  // The colour is a per-node attribute computed by lib/scalar-field.ts, so the picture, the
+  // legend and the probe all come from one ramp. An unmeasured node arrives grey, not blue.
+  gl_FragColor = vec4(v_color * intensity, 1.0);
 }
 `;
 
@@ -58,8 +59,18 @@ function compileShader(gl: WebGLRenderingContext, source: string, type: number):
   return shader;
 }
 
+/** The two fields a structural solve leaves on the surface. */
+type ShownKind = Extract<FieldKind, "stress" | "displacement">;
+
 interface Props {
   data: SurfaceFieldArrays;
+}
+
+/** How close, in CSS pixels, a click must land to a node to read it. */
+const PICK_RADIUS_PX = 18;
+
+function valuesFor(data: SurfaceFieldArrays, kind: ShownKind): ArrayLike<number> {
+  return kind === "stress" ? data.vonMisesMpa : magnitudeOfFlat(data.displacements);
 }
 
 export function WebGLStressViewer({ data }: Props) {
@@ -70,6 +81,13 @@ export function WebGLStressViewer({ data }: Props) {
   const lastPinchDistanceRef = useRef<number | null>(null);
   const distanceRef = useRef(3);
   const [scaleFactor, setScaleFactor] = useState(5);
+  // What the surface is coloured by (ROAD_TO_10 8.3). Both fields come from the one solve.
+  const [kind, setKind] = useState<ShownKind>("stress");
+  const kindRef = useRef<ShownKind>(kind);
+  const [probe, setProbe] = useState<string | null>(null);
+  const pickRef = useRef<((clientX: number, clientY: number) => number | null) | null>(null);
+  const recolourRef = useRef<((next: ShownKind) => void) | null>(null);
+  const downAtRef = useRef<{ x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [contextLost, setContextLost] = useState(false);
   /** Bumped on `webglcontextrestored` to rebuild every GL object from scratch. */
@@ -154,7 +172,6 @@ export function WebGLStressViewer({ data }: Props) {
       const positions = data.positions;
       const displacements = data.displacements;
       const triangles = data.triangles;
-      const maxStress = data.maxVonMisesMpa || 1;
 
       /** Vertex positions and normals at a given displacement scale.
        *
@@ -218,12 +235,18 @@ export function WebGLStressViewer({ data }: Props) {
       }
 
       const { displaced, normals } = computeGeometry(scaleFactorRef.current);
+      // What is on screen now, for picking: the displaced nodes, their normals and the matrices.
+      let shownPositions = displaced;
+      let shownNormals = normals;
+      let lastModelView: Float32Array | null = null;
+      let lastProjection: Float32Array | null = null;
 
-      // Per-vertex stress normalised
-      const stresses = new Float32Array(data.vonMisesMpa.length);
-      for (let i = 0; i < stresses.length; i++) {
-        stresses[i] = data.vonMisesMpa[i] / maxStress;
-      }
+      // Per-vertex colour from the shared ramp. Recomputed (not rebuilt) when the field changes.
+      const colourFor = (shown: ShownKind): Float32Array => {
+        const values = valuesFor(data, shown);
+        return colourBuffer(values, shown, rangeFor(shown, values));
+      };
+      const colours = colourFor(kindRef.current);
 
       // Buffers
       const posBuf = gl.createBuffer();
@@ -240,12 +263,12 @@ export function WebGLStressViewer({ data }: Props) {
       gl.enableVertexAttribArray(aNormal);
       gl.vertexAttribPointer(aNormal, 3, gl.FLOAT, false, 0, 0);
 
-      const stressBuf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, stressBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, stresses, gl.STATIC_DRAW);
-      const aStress = gl.getAttribLocation(program, "a_stress");
-      gl.enableVertexAttribArray(aStress);
-      gl.vertexAttribPointer(aStress, 1, gl.FLOAT, false, 0, 0);
+      const colourBuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, colourBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, colours, gl.STATIC_DRAW);
+      const aColour = gl.getAttribLocation(program, "a_color");
+      gl.enableVertexAttribArray(aColour);
+      gl.vertexAttribPointer(aColour, 3, gl.FLOAT, false, 0, 0);
 
       const idxBuf = gl.createBuffer();
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
@@ -323,6 +346,8 @@ export function WebGLStressViewer({ data }: Props) {
 
         gl.uniformMatrix4fv(uModelView, false, mv);
         gl.uniformMatrix4fv(uProjection, false, proj);
+        lastModelView = mv;
+        lastProjection = proj;
 
         gl.drawElements(gl.TRIANGLES, indexCount, indexType, 0);
       }
@@ -342,11 +367,55 @@ export function WebGLStressViewer({ data }: Props) {
       refreshGeometryRef.current = (scale: number) => {
         if (disposed || gl.isContextLost?.()) return;
         const next = computeGeometry(scale);
+        shownPositions = next.displaced;
+        shownNormals = next.normals;
         gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.displaced);
         gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
         gl.bufferSubData(gl.ARRAY_BUFFER, 0, next.normals);
         scheduleDraw();
+      };
+
+      // Recolour in place when the field changes: same byte length, so bufferSubData.
+      recolourRef.current = (next: ShownKind) => {
+        if (disposed || gl.isContextLost?.()) return;
+        gl.bindBuffer(gl.ARRAY_BUFFER, colourBuf);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, colourFor(next));
+        scheduleDraw();
+      };
+
+      // The node nearest a click, among those facing the camera, or null if none is close.
+      // Screen-space over the displayed nodes: no depth buffer read-back, no extra render.
+      pickRef.current = (clientX: number, clientY: number) => {
+        if (!lastModelView || !lastProjection || !canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        const px = clientX - rect.left;
+        const py = clientY - rect.top;
+        const mv = lastModelView;
+        const pr = lastProjection;
+        let best = -1;
+        let bestDistance = PICK_RADIUS_PX;
+        for (let node = 0; node < shownPositions.length / 3; node++) {
+          const x = shownPositions[node * 3];
+          const y = shownPositions[node * 3 + 1];
+          const z = shownPositions[node * 3 + 2];
+          // Facing the camera: the view-space normal's z is positive.
+          const nz = mv[2] * shownNormals[node * 3] + mv[6] * shownNormals[node * 3 + 1] + mv[10] * shownNormals[node * 3 + 2];
+          if (nz <= 0) continue;
+          const vx = mv[0] * x + mv[4] * y + mv[8] * z + mv[12];
+          const vy = mv[1] * x + mv[5] * y + mv[9] * z + mv[13];
+          const vz = mv[2] * x + mv[6] * y + mv[10] * z + mv[14];
+          const cw = pr[11] * vz;
+          if (cw <= 0) continue;
+          const sx = ((pr[0] * vx) / cw * 0.5 + 0.5) * rect.width;
+          const sy = (1 - ((pr[5] * vy) / cw * 0.5 + 0.5)) * rect.height;
+          const distance = Math.hypot(sx - px, sy - py);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            best = node;
+          }
+        }
+        return best >= 0 ? best : null;
       };
 
       let observer: ResizeObserver | null = null;
@@ -377,6 +446,8 @@ export function WebGLStressViewer({ data }: Props) {
         observer?.disconnect();
         window.removeEventListener("resize", handleWindowResize);
         refreshGeometryRef.current = null;
+        recolourRef.current = null;
+        pickRef.current = null;
         invalidateRef.current = () => {};
         // Delete every GL object. Note this does NOT call
         // WEBGL_lose_context.loseContext(): a force-lost context is never
@@ -385,7 +456,7 @@ export function WebGLStressViewer({ data }: Props) {
         gl.deleteProgram(program);
         gl.deleteShader(vs);
         gl.deleteShader(fs);
-        for (const buf of [posBuf, normBuf, stressBuf, idxBuf]) {
+        for (const buf of [posBuf, normBuf, colourBuf, idxBuf]) {
           gl.deleteBuffer(buf);
         }
       };
@@ -393,6 +464,18 @@ export function WebGLStressViewer({ data }: Props) {
       setError(err instanceof Error ? err.message : "Failed to initialise WebGL viewer.");
     }
   }, [data, contextLost, glGeneration]);
+
+  // A different field repaints the surface.
+  useEffect(() => {
+    kindRef.current = kind;
+    recolourRef.current?.(kind);
+  }, [kind]);
+
+  // The legend, from the same field and range the colours were computed from.
+  const legend = useMemo(() => {
+    const values = valuesFor(data, kind);
+    return legendFor(kind, values, rangeFor(kind, values));
+  }, [data, kind]);
 
   // Slider changes touch vertex data only -- see refreshGeometryRef above.
   useEffect(() => {
@@ -403,7 +486,12 @@ export function WebGLStressViewer({ data }: Props) {
   function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
     canvasRef.current?.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pointersRef.current.size === 1) draggingRef.current = true;
+    if (pointersRef.current.size === 1) {
+      draggingRef.current = true;
+      downAtRef.current = { x: event.clientX, y: event.clientY };
+    } else {
+      downAtRef.current = null;
+    }
   }
 
   function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
@@ -434,6 +522,17 @@ export function WebGLStressViewer({ data }: Props) {
   }
 
   function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
+    // A press that barely moved is a click, not a drag: read the node under it.
+    const down = downAtRef.current;
+    downAtRef.current = null;
+    if (
+      event.type === "pointerup" &&
+      down &&
+      Math.hypot(event.clientX - down.x, event.clientY - down.y) < 4
+    ) {
+      const node = pickRef.current?.(event.clientX, event.clientY) ?? null;
+      setProbe(node === null ? null : probeNode(valuesFor(data, kind), kind, node).text);
+    }
     canvasRef.current?.releasePointerCapture(event.pointerId);
     pointersRef.current.delete(event.pointerId);
     if (pointersRef.current.size < 2) lastPinchDistanceRef.current = null;
@@ -493,17 +592,43 @@ export function WebGLStressViewer({ data }: Props) {
         />
         <span className="font-mono text-xs">{scaleFactor}×</span>
       </div>
+      <div className="flex items-center gap-2 text-sm" role="group" aria-label="Colour the surface by">
+        {(["stress", "displacement"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            aria-pressed={kind === option}
+            onClick={() => {
+              // The probe's reading belonged to the field it was taken from.
+              setProbe(null);
+              setKind(option);
+            }}
+            className={`k-pill ${kind === option ? "ring-1 ring-primary" : ""}`}
+          >
+            {FIELDS[option].label}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center gap-3 text-xs text-muted">
-        <span>0 MPa</span>
+        <span>
+          {legend.min.toFixed(kind === "stress" ? 1 : 3)} {legend.unit}
+        </span>
         <div
           aria-hidden="true"
           className="h-2 flex-1 rounded-full"
-          style={{
-            background: "linear-gradient(to right, #1a33e6, #00cc33, #ffff00, #f22619)",
-          }}
+          style={{ background: rampGradientCss(kind) }}
         />
-        <span>{(data?.maxVonMisesMpa ?? 0).toFixed(1)} MPa</span>
+        <span>
+          {legend.max.toFixed(kind === "stress" ? 1 : 3)} {legend.unit}
+        </span>
       </div>
+      {/* The legend states its own bounds and that they were fitted, and any node that was not
+          computed: two views with different fitted scales are not comparable. */}
+      {legend.caveat && <p className="text-xs text-muted">{legend.caveat}</p>}
+      {legend.absentNote && <p className="text-xs text-warning">{legend.absentNote}</p>}
+      <p aria-live="polite" className="min-h-4 font-mono text-xs text-accent">
+        {probe ?? "Click the surface to read a node."}
+      </p>
     </div>
   );
 }

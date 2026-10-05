@@ -4,13 +4,16 @@ import {
   ABSENT,
   FIELDS,
   FIXED_RANGES,
+  colourBuffer,
   colourField,
   colourFor,
   legendFor,
   magnitudeField,
+  magnitudeOfFlat,
   normalise,
   probeNode,
   ramp,
+  rampGradientCss,
   rangeFor,
   type FieldKind,
 } from "./scalar-field";
@@ -229,5 +232,51 @@ describe("the ramp", () => {
         expect(channel).toBeLessThanOrEqual(1);
       }
     }
+  });
+});
+
+describe("what the result viewer needs (ROAD_TO_10 8.3)", () => {
+  it("fits a range over a field too large to spread into Math.min", () => {
+    // 500k values: `Math.min(...field)` throws RangeError at this size.
+    const field = new Float32Array(500_000);
+    for (let i = 0; i < field.length; i++) field[i] = i % 1000;
+    const range = rangeFor("stress", field);
+    expect(range.min).toBe(0);
+    expect(range.max).toBe(999);
+  });
+
+  it("takes the magnitude of a flat xyz array, and NaN for a node missing a component", () => {
+    const magnitudes = magnitudeOfFlat([3, 4, 0, 0, 0, 2, 1, Number.NaN, 0]);
+    expect(magnitudes[0]).toBeCloseTo(5, 6);
+    expect(magnitudes[1]).toBeCloseTo(2, 6);
+    expect(Number.isNaN(magnitudes[2])).toBe(true);
+    expect(magnitudes).toHaveLength(3);
+  });
+
+  it("builds a colour buffer that agrees with colourFor, node by node", () => {
+    const field = [0, 5, 10, Number.NaN];
+    const range = { min: 0, max: 10, auto: true };
+    const buffer = colourBuffer(field, "stress", range);
+    expect(buffer).toHaveLength(12);
+    for (let node = 0; node < field.length; node++) {
+      const [r, g, b] = colourFor(field[node], range, "stress");
+      expect(buffer[node * 3]).toBeCloseTo(r, 5);
+      expect(buffer[node * 3 + 1]).toBeCloseTo(g, 5);
+      expect(buffer[node * 3 + 2]).toBeCloseTo(b, 5);
+    }
+  });
+
+  it("draws the legend gradient low to high, reversed for a kind where low is bad", () => {
+    const stress = rampGradientCss("stress");
+    const thickness = rampGradientCss("thickness");
+    expect(stress.startsWith("linear-gradient(to right, rgb(0 0 255) 0%")).toBe(true);
+    expect(stress.endsWith("rgb(255 0 0) 100%)")).toBe(true);
+    // Thin is bad, so the *lowest* value sits at the hot end.
+    expect(thickness.startsWith("linear-gradient(to right, rgb(255 0 0) 0%")).toBe(true);
+  });
+
+  it("counts unmeasured nodes in the legend note from a typed array", () => {
+    const legend = legendFor("stress", new Float32Array([1, Number.NaN, 3]));
+    expect(legend.absentNote).toContain("1 node");
   });
 });

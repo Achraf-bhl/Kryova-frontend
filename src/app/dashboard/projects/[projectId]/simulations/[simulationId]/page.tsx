@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { PageShell } from "@/components/ui/page-shell";
 import { api } from "@/lib/api-client";
 import { formatDuration, statusColor } from "@/lib/format";
+import { headlineStress } from "@/lib/result-peak";
 import {
   initialPollState,
   nextAfterError,
@@ -139,6 +140,7 @@ function SimulationDetail() {
   }
 
   const result = simulation.result;
+  const headline = headlineStress(simulation);
   const meshStats = toEntries(simulation.mesh_stats);
 
   return (
@@ -201,14 +203,14 @@ function SimulationDetail() {
           error, and this is where that gets said. */}
       {result && <VerificationSummary simulation={simulation} />}
 
-      {result && (
+      {result && headline && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <StatCard label="Max von Mises" value={`${result.max_von_mises_mpa.toFixed(1)} MPa`} />
+          <StatCard label={headline.label} value={`${headline.mpa.toFixed(1)} MPa`} />
           <StatCard label="Max displacement" value={`${result.max_displacement_mm.toExponential(2)} mm`} />
           <StatCard
             label="Factor of safety"
-            value={result.factor_of_safety.toFixed(2)}
-            tone={result.factor_of_safety < 1 ? "danger" : result.factor_of_safety < 1.5 ? "warn" : undefined}
+            value={headline.factorOfSafety.toFixed(2)}
+            tone={headline.factorOfSafety < 1 ? "danger" : headline.factorOfSafety < 1.5 ? "warn" : undefined}
           />
           <StatCard label="Mass" value={`${result.mass_kg.toFixed(2)} kg`} />
           <StatCard label="Volume" value={`${result.volume_mm3.toLocaleString(undefined, { maximumFractionDigits: 0 })} mm³`} />
@@ -221,6 +223,14 @@ function SimulationDetail() {
             tone={result.yields ? "danger" : undefined}
           />
         </div>
+      )}
+
+      {headline && (
+        <p className="text-xs text-muted">
+          {headline.label}: <span className="font-mono text-accent">{headline.basis}</span>.
+          {headline.alsoElementMpa !== null &&
+            ` The element value is ${headline.alsoElementMpa.toFixed(1)} MPa; the verdict rests on the larger.`}
+        </p>
       )}
 
       {meshStats.length > 0 && (
@@ -253,7 +263,7 @@ function SimulationDetail() {
 
       {surface && simulation.status === "succeeded" && (
         <section>
-          <h2 className="mb-3 text-lg font-semibold">Von Mises stress</h2>
+          <h2 className="mb-3 text-lg font-semibold">Result on the part</h2>
           <WebGLStressViewer data={surface} />
         </section>
       )}
