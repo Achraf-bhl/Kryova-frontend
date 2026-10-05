@@ -909,6 +909,54 @@ export interface AiCacheHealth {
   alert: string | null;
 }
 
+/** One timed site's recent durations from the answering worker's span ledger (ROAD_TO_10 9.6). */
+export interface SiteLatency {
+  name: string;
+  seen: number;
+  failures: number;
+  window_size: number;
+  median_seconds: number;
+  p95_seconds: number;
+  max_seconds: number;
+  /** True when the sample is too small for p95 to be anything but the maximum. */
+  p95_is_the_maximum: boolean;
+}
+
+export interface TurnCost {
+  turns: number;
+  priced_turns: number;
+  /** Turns with no configured price: counted apart, never as free. */
+  unpriced_turns: number;
+  /** Integer micro-dollars (1e-6 USD). */
+  total_micro_usd: number;
+  mean_micro_usd: number | null;
+  max_micro_usd: number | null;
+  median_wall_ms: number | null;
+  p95_wall_ms: number | null;
+  by_stop_reason: Record<string, number>;
+}
+
+export interface OperationLatency {
+  tool: string;
+  count: number;
+  failures: number;
+  median_ms: number;
+  p95_ms: number;
+  max_ms: number;
+  p95_is_the_maximum: boolean;
+}
+
+/** `GET /admin/observability` — mirrors `app/schemas/admin.py::ObservabilityRead`. */
+export interface Observability {
+  window_hours: number;
+  /** `scope` says whose view this is: one worker process, not the fleet. */
+  spans: { scope: string; sites: SiteLatency[] };
+  turns: TurnCost;
+  ai_cache: AiCacheHealth;
+  queue_depth: Record<string, number>;
+  bridge: { operations: OperationLatency[]; truncated: boolean };
+}
+
 export interface FleetHealth {
   window_hours: number;
   queue_depth: Record<string, number>;

@@ -11,9 +11,11 @@ import type {
   FeatureFlag,
   FleetHealth,
   MaintenanceWindow,
+  Observability,
 } from "@/types/api";
 
 import { AiCachePanel } from "./ai-cache-panel";
+import { ObservabilityPanel } from "./observability-panel";
 
 /**
  * Fleet health, feature flags, maintenance mode and announcements (P3.5–P3.7).
@@ -25,6 +27,7 @@ import { AiCachePanel } from "./ai-cache-panel";
  */
 export function OperationsConsole() {
   const [health, setHealth] = useState<FleetHealth | null>(null);
+  const [observability, setObservability] = useState<Observability | null>(null);
   const [denied, setDenied] = useState(false);
 
   const load = useCallback(() => {
@@ -38,6 +41,14 @@ export function OperationsConsole() {
 
   useEffect(load, [load]);
 
+  // A separate request: the page must not wait on, or fail with, the heavier read.
+  useEffect(() => {
+    api
+      .observability()
+      .then(setObservability)
+      .catch(() => setObservability(null));
+  }, []);
+
   if (denied) {
     return <p className="text-sm text-muted">There is nothing here.</p>;
   }
@@ -46,6 +57,7 @@ export function OperationsConsole() {
   return (
     <div className="space-y-10">
       <HealthSection health={health} onRefresh={load} />
+      {observability && <ObservabilityPanel data={observability} />}
       <MaintenanceSection />
       <AnnouncementSection />
       <FlagSection />

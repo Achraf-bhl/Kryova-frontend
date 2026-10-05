@@ -32,6 +32,7 @@ import type {
   FeatureFlag,
   ApiReference,
   FleetHealth,
+  Observability,
   GatePage,
   GateRead,
   GateState,
@@ -610,6 +611,8 @@ export const api = {
   // Every one of these is 404 for a non-staff caller: for an ordinary user the
   // whole /admin tree is simply not there.
   fleetHealth: (hours = 24) => request<FleetHealth>(`/admin/health?hours=${hours}`),
+  observability: (hours = 24) =>
+    request<Observability>(`/admin/observability?hours=${hours}`),
   listFlags: () => request<FeatureFlag[]>("/admin/flags"),
   createFlag: (body: {
     key: string;
