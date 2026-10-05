@@ -42,6 +42,14 @@ import type {
   MfaStatus,
   PlatformState,
   ProjectCreate,
+  ProjectDuplicated,
+  ProjectFromTemplate,
+  ProjectImported,
+  ProjectListQuery,
+  ProjectTemplate,
+  ProjectUpdate,
+  ActivityPage,
+  DesignSummary,
   ProjectMemoryPage,
   ProjectMemoryRead,
   ProjectRead,
@@ -90,6 +98,21 @@ export type ProjectPage = Page<ProjectRead>;
 export interface PageParams {
   page?: number;
   pageSize?: number;
+}
+
+/** `?page=…&q=…` for the project list. Empty and default values are left out, so the common
+ * request is the same URL as before and a cached response is not missed over a blank `q=`. */
+export function projectListQuery(query: ProjectListQuery): string {
+  const search = new URLSearchParams();
+  search.set("page", String(query.page ?? 1));
+  search.set("page_size", String(query.pageSize ?? 50));
+  const text = query.q?.trim();
+  if (text) search.set("q", text);
+  const tag = query.tag?.trim();
+  if (tag) search.set("tag", tag);
+  if (query.starred) search.set("starred", "true");
+  if (query.archived && query.archived !== "exclude") search.set("archived", query.archived);
+  return `?${search.toString()}`;
 }
 
 function toQuery(params?: PageParams): string {
@@ -773,6 +796,52 @@ export const api = {
 
   listProjects: (page = 1, pageSize = 50) =>
     request<ProjectPage>(`/projects?page=${page}&page_size=${pageSize}`),
+  /** The searchable form (ROAD_TO_10 7.6). `projectListQuery` builds the string. */
+  searchProjects: (query: ProjectListQuery) =>
+    request<ProjectPage>(`/projects${projectListQuery(query)}`),
+  updateProject: (projectId: string, payload: ProjectUpdate) =>
+    mutatingRequest<ProjectRead>(`/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  starProject: (projectId: string, starred: boolean) =>
+    mutatingRequest<ProjectRead>(`/projects/${projectId}/star`, {
+      method: starred ? "PUT" : "DELETE",
+    }),
+  duplicateProject: (projectId: string, name?: string) =>
+    mutatingRequest<ProjectDuplicated>(`/projects/${projectId}/duplicate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(name ? { name } : {}),
+    }),
+  projectActivity: (projectId: string, before?: string | null, limit = 30) =>
+    request<ActivityPage>(
+      `/projects/${projectId}/activity?limit=${limit}${
+        before ? `&before=${encodeURIComponent(before)}` : ""
+      }`,
+    ),
+  /** One zip: geometry, designs with their revision chains, runs, technical file, manifest. */
+  exportProjectBlob: (projectId: string) => requestBlob(`/projects/${projectId}/export`),
+  importProject: (file: File, name?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (name) form.append("name", name);
+    return uploadRequest<ProjectImported>("/projects/import", form);
+  },
+  listProjectTemplates: () => request<ProjectTemplate[]>("/projects/templates"),
+  createProjectFromTemplate: (template: string, name?: string) =>
+    mutatingRequest<ProjectFromTemplate>("/projects/from-template", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(name ? { template, name } : { template }),
+    }),
+  listProjectDesigns: (projectId: string) =>
+    request<Page<DesignSummary>>(`/designs?project_id=${projectId}&page=1&page_size=100`),
+  listProjectConversations: (projectId: string) =>
+    request<ConversationPage>(
+      `/ai/conversations?project_id=${projectId}&page=1&page_size=100`,
+    ),
   createProject: (payload: ProjectCreate) =>
     mutatingRequest<ProjectRead>("/projects", {
       method: "POST",

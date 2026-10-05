@@ -81,11 +81,99 @@ export interface ProjectRead {
   organisation_id: string;
   created_at: string;
   updated_at: string;
+  /** When it was put away, or null. Archived projects are hidden from the list by default. */
+  archived_at: string | null;
+  tags: string[];
+  /** The mission rung it was started from (`M1`…), if any. */
+  template_key: string | null;
+  /** Whether *the requesting user* starred it — per person, never per project. */
+  starred: boolean;
 }
 
 export interface ProjectCreate {
   name: string;
   description?: string | null;
+}
+
+export interface ProjectUpdate {
+  name?: string;
+  description?: string | null;
+  /** Replaces the whole list; the server lower-cases and de-duplicates. */
+  tags?: string[];
+  archived?: boolean;
+}
+
+export type ArchivedFilter = "exclude" | "include" | "only";
+
+export interface ProjectListQuery {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  tag?: string;
+  starred?: boolean;
+  archived?: ArchivedFilter;
+}
+
+export interface ProjectDuplicated {
+  project: ProjectRead;
+  geometry_versions: number;
+  designs: number;
+  /** What the copy does not carry — shown to the user, never hidden. */
+  left_out: string[];
+}
+
+export type ActorKind = "user" | "agent" | "unknown";
+
+export interface ActivityEntry {
+  at: string;
+  kind: string;
+  summary: string;
+  actor_kind: ActorKind;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  target_type: string | null;
+  target_id: string | null;
+}
+
+export interface ActivityPage {
+  items: ActivityEntry[];
+  /** Pass as `before` for the next page; null on the last. */
+  next_before: string | null;
+}
+
+export interface ProjectTemplate {
+  key: string;
+  title: string;
+  era: string;
+  kind: string;
+  hard: string;
+  claims: string[];
+  /** What starting from this rung does NOT prove — always rendered beside the claims. */
+  unproven: string[];
+  seeds_a_design: boolean;
+}
+
+export interface ProjectFromTemplate {
+  project: ProjectRead;
+  template: ProjectTemplate;
+  conversation_id: string | null;
+  design_note: string;
+}
+
+export interface ProjectImported {
+  project: ProjectRead;
+  geometry_versions: number;
+  designs: number;
+  not_restored: string[];
+}
+
+export interface DesignSummary {
+  id: string;
+  conversation_id: string;
+  name: string;
+  digest: string;
+  revision_number: number;
+  updated_at: string;
 }
 
 export interface GeometryVersionRead {

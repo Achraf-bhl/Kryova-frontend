@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 
 import { PageShell } from "@/components/ui/page-shell";
 import {
+  fetchCurrentUser,
   fetchGeometryVersions,
   fetchProject,
   fetchSimulations,
@@ -22,12 +23,14 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   let data: Awaited<ReturnType<typeof fetchProject>>;
   let geometry: Awaited<ReturnType<typeof fetchGeometryVersions>>;
   let simulations: Awaited<ReturnType<typeof fetchSimulations>>;
+  let me: Awaited<ReturnType<typeof fetchCurrentUser>>;
 
   try {
-    [data, geometry, simulations] = await Promise.all([
+    [data, geometry, simulations, me] = await Promise.all([
       fetchProject(projectId),
       fetchGeometryVersions(projectId),
       fetchSimulations(projectId),
+      fetchCurrentUser(),
     ]);
   } catch (error) {
     // Only a real 404 is a missing project. A 500, a timeout or an unreachable
@@ -45,6 +48,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
         project={data}
         geometryVersions={geometry}
         simulations={simulations}
+        currentUserId={me.id}
       />
     </PageShell>
   );

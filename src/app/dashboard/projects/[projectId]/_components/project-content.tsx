@@ -6,6 +6,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { CatiaBridgePanel } from "@/components/catia-bridge-panel";
 import { ProjectMemoryPanel } from "@/components/project-memory/memory-panel";
+import { ActivityFeed } from "@/components/projects/activity-feed";
+import { ProjectHeader } from "@/components/projects/project-header";
+import { ProjectOverview } from "@/components/projects/project-overview";
 import { SharePanel, TransferPanel } from "@/components/sharing/share-panel";
 import { api } from "@/lib/api-client";
 import { uploadGeometryFile } from "@/lib/chunked-upload";
@@ -29,9 +32,16 @@ export interface ProjectContentProps {
   project: ProjectRead;
   geometryVersions: GeometryVersionRead[];
   simulations: SimulationRead[];
+  /** For "You" in the activity feed. Null renders every user as their address. */
+  currentUserId?: string | null;
 }
 
-export function ProjectContent({ project, geometryVersions: initialGeometry, simulations }: ProjectContentProps) {
+export function ProjectContent({
+  project,
+  geometryVersions: initialGeometry,
+  simulations,
+  currentUserId = null,
+}: ProjectContentProps) {
   const projectId = project.id;
   const [geometryVersions, setGeometryVersions] = useState(initialGeometry);
   const [uploading, setUploading] = useState(false);
@@ -73,17 +83,7 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="flex items-start justify-between">
-        <div>
-          <Link href="/dashboard" className="text-sm text-muted hover:text-accent">
-            ← All projects
-          </Link>
-          <h1 className="mt-2 text-2xl font-semibold">{project.name}</h1>
-          {project.description && (
-            <p className="mt-1 max-w-xl text-sm text-muted">{project.description}</p>
-          )}
-        </div>
-      </div>
+      <ProjectHeader project={project} />
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
@@ -172,6 +172,10 @@ export function ProjectContent({ project, geometryVersions: initialGeometry, sim
           </ul>
         )}
       </section>
+
+      <ProjectOverview projectId={projectId} organisationId={project.organisation_id} />
+
+      <ActivityFeed projectId={projectId} currentUserId={currentUserId} />
 
       <SharePanel projectId={projectId} />
 

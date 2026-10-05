@@ -448,3 +448,28 @@ describe("a rate-limited answer (ROAD_TO_10 3.2)", () => {
     });
   });
 });
+
+describe("the project list query", () => {
+  it("leaves out defaults so the common request is unchanged", async () => {
+    const { projectListQuery } = await import("./api-client");
+    expect(projectListQuery({})).toBe("?page=1&page_size=50");
+  });
+
+  it("carries a search, a tag, the starred filter and the archive filter", async () => {
+    const { projectListQuery } = await import("./api-client");
+    const query = new URLSearchParams(
+      projectListQuery({ q: " press ", tag: "frame", starred: true, archived: "only" }),
+    );
+    expect(query.get("q")).toBe("press");
+    expect(query.get("tag")).toBe("frame");
+    expect(query.get("starred")).toBe("true");
+    expect(query.get("archived")).toBe("only");
+  });
+
+  it("does not send a blank search or the default archive filter", async () => {
+    const { projectListQuery } = await import("./api-client");
+    const query = new URLSearchParams(projectListQuery({ q: "  ", archived: "exclude" }));
+    expect(query.has("q")).toBe(false);
+    expect(query.has("archived")).toBe(false);
+  });
+});
