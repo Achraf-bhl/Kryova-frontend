@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -69,7 +69,9 @@ describe("token custody", () => {
     for (const path of sourceFiles(SOURCE_ROOT)) {
       if (/\.test\.tsx?$/.test(path)) continue;
       const source = readFileSync(path, "utf8");
-      if (NOT_CREDENTIALS[path.replace(`${process.cwd()}/`, "")]) continue;
+      // Keyed with "/" on every platform; Windows hands back "src\lib\theme.ts".
+      const key = relative(process.cwd(), path).split(sep).join("/");
+      if (NOT_CREDENTIALS[key]) continue;
       for (const { pattern, name } of FORBIDDEN) {
         if (pattern.test(source)) {
           offenders.push(`${path.replace(process.cwd(), ".")} uses ${name}`);

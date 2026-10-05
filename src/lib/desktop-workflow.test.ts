@@ -14,7 +14,12 @@ import { REQUIRED_FILES } from "../../scripts/stage-desktop.mjs";
  *
  * Lives in `src/lib/` only because vitest collects `src/**`.
  */
-const workflow = readFileSync(join(process.cwd(), ".github/workflows/desktop.yml"), "utf8");
+// CRLF folded to LF: a Windows checkout (core.autocrlf) has CRLF, and every search below is
+// written in LF, so without this each job reads as missing there.
+const workflow = readFileSync(join(process.cwd(), ".github/workflows/desktop.yml"), "utf8").replace(
+  /\r\n/g,
+  "\n",
+);
 
 /** The text of one top-level job, from its key to the next job's key (or the end). */
 function job(name: string): string {

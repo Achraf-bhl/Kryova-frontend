@@ -86,6 +86,13 @@ export async function readTail(
   maxBytes: number = TAIL_BYTES,
 ): Promise<{ bytes: number; modified: Date; truncated: boolean; text: string }> {
   const info = await stat(file);
+  if (!info.isFile()) {
+    // Linux refuses `open` on a directory with EISDIR. Windows opens it, reports size 0, and the
+    // tail would read as an empty log -- the one answer this report must never give falsely.
+    throw Object.assign(new Error(`${file} is not a regular file`), {
+      code: info.isDirectory() ? "EISDIR" : "ENOTFILE",
+    });
+  }
   const length = Math.min(info.size, maxBytes);
   const handle = await open(file, "r");
   try {
