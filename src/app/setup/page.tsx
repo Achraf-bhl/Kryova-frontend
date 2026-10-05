@@ -192,7 +192,7 @@ export default function SetupPage() {
                     ) : (
                       <>
                         The API server is not reachable. Start it with{" "}
-                        <code className="rounded bg-white/50 px-1 py-0.5 font-mono text-xs">uvicorn app.main:app --reload</code>{" "}
+                        <code className="rounded bg-surface-sunken px-1 py-0.5 font-mono text-xs">uvicorn app.main:app --reload</code>{" "}
                         then retry.
                       </>
                     )}

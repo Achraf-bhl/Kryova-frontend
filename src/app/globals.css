@@ -77,6 +77,77 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Dark theme (ROAD_TO_10 8.5).
+
+   Only values move; every component already reads tokens. Selected two ways:
+   an explicit `data-theme="dark"` (the toggle), or the OS preference when the
+   user has not chosen (`data-theme` absent) -- `lib/theme.ts` owns the
+   attribute. The two blocks below must carry the same values; a test reads
+   both and fails when one drifts.
+
+   `--color-primary` is a touch lighter than in light mode because it is used
+   as text and as a button fill with white text; #3f78ff keeps both readable on
+   the dark surface (contrast to be re-measured on the seat, 8.11).
+--------------------------------------------------------------------------- */
+
+:root {
+  color-scheme: light;
+  --paper-wash: rgb(255 255 255 / 0.55);
+  --paper-glow: rgb(124 198 245 / 0.18);
+  --paper-grid: rgb(27 58 140 / 0.035);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-surface: #131c2e;
+  --color-surface-sunken: #0f1726;
+  --color-canvas: #0a111e;
+  --color-canvas-deep: #070d18;
+  --color-border: #243350;
+  --color-border-strong: #33466e;
+  --color-accent: #e8eefb;
+  --color-muted: #a3b3cf;
+  --color-faint: #8095b6;
+  --color-blueprint: #8fb0ff;
+  --color-primary: #3f78ff;
+  --color-primary-hover: #5f8fff;
+  --color-primary-soft: #172648;
+  --color-cyan-tint: #7cc6f5;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.3);
+  --shadow-raised: 0 4px 16px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.35);
+  --shadow-composer: 0 2px 6px rgb(0 0 0 / 0.35), 0 12px 32px rgb(0 0 0 / 0.45);
+  --paper-wash: rgb(255 255 255 / 0.02);
+  --paper-glow: rgb(63 120 255 / 0.12);
+  --paper-grid: rgb(143 176 255 / 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]):not([data-theme="dark"]) {
+    color-scheme: dark;
+    --color-surface: #131c2e;
+    --color-surface-sunken: #0f1726;
+    --color-canvas: #0a111e;
+    --color-canvas-deep: #070d18;
+    --color-border: #243350;
+    --color-border-strong: #33466e;
+    --color-accent: #e8eefb;
+    --color-muted: #a3b3cf;
+    --color-faint: #8095b6;
+    --color-blueprint: #8fb0ff;
+    --color-primary: #3f78ff;
+    --color-primary-hover: #5f8fff;
+    --color-primary-soft: #172648;
+    --color-cyan-tint: #7cc6f5;
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.3);
+    --shadow-raised: 0 4px 16px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.35);
+    --shadow-composer: 0 2px 6px rgb(0 0 0 / 0.35), 0 12px 32px rgb(0 0 0 / 0.45);
+    --paper-wash: rgb(255 255 255 / 0.02);
+    --paper-glow: rgb(63 120 255 / 0.12);
+    --paper-grid: rgb(143 176 255 / 0.05);
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Canvas: blueprint paper.
 
    A single faint grid at one scale, not a nested millimetre/centimetre pair --
@@ -88,10 +159,10 @@
 body {
   background-color: var(--color-canvas);
   background-image:
-    linear-gradient(to bottom, rgb(255 255 255 / 0.55), transparent 42%),
-    radial-gradient(ellipse 80% 55% at 50% 0%, rgb(124 198 245 / 0.18), transparent 70%),
-    linear-gradient(to right, rgb(27 58 140 / 0.035) 1px, transparent 1px),
-    linear-gradient(to bottom, rgb(27 58 140 / 0.035) 1px, transparent 1px);
+    linear-gradient(to bottom, var(--paper-wash), transparent 42%),
+    radial-gradient(ellipse 80% 55% at 50% 0%, var(--paper-glow), transparent 70%),
+    linear-gradient(to right, var(--paper-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--paper-grid) 1px, transparent 1px);
   background-size: 100% 100%, 100% 100%, 28px 28px, 28px 28px;
   color: var(--color-accent);
   font-family: var(--font-sans);

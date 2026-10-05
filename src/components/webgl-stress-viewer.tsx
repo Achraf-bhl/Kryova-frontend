@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { currentTheme, subscribeTheme, viewerBackground } from "@/lib/theme";
+
 import type { SurfaceFieldArrays } from "@/lib/surface-field";
 
 const VERTEX_SHADER = `
@@ -94,6 +96,13 @@ export function WebGLStressViewer({ data }: Props) {
    */
   const invalidateRef = useRef<() => void>(() => {});
   const invalidate = useCallback(() => invalidateRef.current(), []);
+
+  // The background follows the theme (8.5). The scene is static, so a theme change has to ask
+  // for a frame or the old colour stays until the next drag.
+  useEffect(() => {
+    const redraw = () => invalidateRef.current();
+    return subscribeTheme(redraw);
+  }, []);
 
   // WebGL contexts are a finite, revocable resource: the driver resets, the GPU
   // is switched, or the tab is backgrounded long enough to be reclaimed. The
@@ -281,7 +290,8 @@ export function WebGLStressViewer({ data }: Props) {
           canvas.height = height;
         }
         gl.viewport(0, 0, canvas.width, canvas.height);
-        gl.clearColor(0.96, 0.97, 0.98, 1.0);
+        const [bgR, bgG, bgB] = viewerBackground(currentTheme());
+        gl.clearColor(bgR, bgG, bgB, 1.0);
         gl.enable(gl.DEPTH_TEST);
         gl.enable(gl.CULL_FACE);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
