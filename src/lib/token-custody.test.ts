@@ -36,6 +36,16 @@ const FORBIDDEN = [
   { pattern: /\bindexedDB\b/, name: "indexedDB" },
 ];
 
+/**
+ * Files that may touch browser storage, each for one stated reason that is not a credential.
+ * `theme.ts` keeps the light/dark/system *preference* -- a word, read by an inline script before
+ * first paint so the page does not flash. The test below pins that it stores that one key and
+ * nothing token-shaped, so the exemption cannot quietly widen.
+ */
+const NOT_CREDENTIALS: Record<string, string> = {
+  "src/lib/theme.ts": "the theme preference, read before first paint",
+};
+
 function sourceFiles(directory: string): string[] {
   const found: string[] = [];
   for (const entry of readdirSync(directory)) {
@@ -58,6 +68,7 @@ describe("token custody", () => {
     for (const path of sourceFiles(SOURCE_ROOT)) {
       if (/\.test\.tsx?$/.test(path)) continue;
       const source = readFileSync(path, "utf8");
+      if (NOT_CREDENTIALS[path.replace(`${process.cwd()}/`, "")]) continue;
       for (const { pattern, name } of FORBIDDEN) {
         if (pattern.test(source)) {
           offenders.push(`${path.replace(process.cwd(), ".")} uses ${name}`);
@@ -65,6 +76,13 @@ describe("token custody", () => {
       }
     }
     expect(offenders).toEqual([]);
+  });
+
+  it("lets the theme preference use storage, and only that", () => {
+    const source = readFileSync(join(SOURCE_ROOT, "lib/theme.ts"), "utf8");
+    expect(source).toMatch(/THEME_STORAGE_KEY\s*=\s*"kryova-theme"/);
+    expect(source).not.toMatch(/access.?token|refresh|password|secret|credential|bearer|csrf/i);
+    expect(Object.keys(NOT_CREDENTIALS)).toEqual(["src/lib/theme.ts"]);
   });
 
   it("finds source files at all, so an empty pass cannot be a vacuous one", () => {

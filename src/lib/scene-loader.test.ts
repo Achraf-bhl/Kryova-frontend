@@ -160,7 +160,9 @@ describe("culling", () => {
   );
 
   it("with a frustum, a part beside the view is not fetched though it is in front", () => {
-    const aside: ScenePart = { path: "aside", centreMm: [90_000, 0, 1000], radiusMm: 100, level: null };
+    // Large enough to be worth fetching on size alone (hundreds of px), and far enough to the
+    // side that its nearest point is outside the frustum: only the frustum can tell them apart.
+    const aside: ScenePart = { path: "aside", centreMm: [5000, 0, 1000], radiusMm: 2000, level: null };
     const ahead = part("ahead", 1000);
     const { loader, pending } = harness([aside, ahead], 4);
     loader.update(CAMERA, planes);
@@ -168,7 +170,9 @@ describe("culling", () => {
   });
 
   it("without one, the half-space test is all there is, and the part is fetched", () => {
-    const aside: ScenePart = { path: "aside", centreMm: [90_000, 0, 1000], radiusMm: 100, level: null };
+    // Large enough to be worth fetching on size alone (hundreds of px), and far enough to the
+    // side that its nearest point is outside the frustum: only the frustum can tell them apart.
+    const aside: ScenePart = { path: "aside", centreMm: [5000, 0, 1000], radiusMm: 2000, level: null };
     const { loader, pending } = harness([aside], 4);
     loader.update(CAMERA);
     expect(pending.map((p) => p.request.path)).toEqual(["aside"]);
