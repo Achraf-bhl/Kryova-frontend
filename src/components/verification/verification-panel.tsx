@@ -119,7 +119,10 @@ export function VerificationSummary({ simulation }: { simulation: SimulationRead
   }
 
   const solver = simulation.solver;
-  const version = (result.solver_version as string | undefined) ?? null;
+  // A column on the run, not a key of `result`: reading only `result.solver_version`
+  // printed "version not recorded" for every run whose version was recorded.
+  const version =
+    simulation.solver_version ?? (result.solver_version as string | undefined) ?? null;
 
   return (
     <div className="space-y-2 rounded-md border border-border bg-surface px-4 py-3">

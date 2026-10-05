@@ -133,6 +133,16 @@ describe("VerificationSummary", () => {
     expect(screen.getByText("4")).toBeInTheDocument();
   });
 
+  it("names the version the run recorded, which is on the run and not in its result", () => {
+    render(
+      <VerificationSummary
+        simulation={simulation({ solver_version: "0.2.0+21f4666", result: {} as never })}
+      />,
+    );
+    expect(screen.getByText(/0\.2\.0\+21f4666/)).toBeInTheDocument();
+    expect(screen.queryByText(/version not recorded/)).not.toBeInTheDocument();
+  });
+
   it("says the solver version is unrecorded rather than omitting the question", () => {
     render(<VerificationSummary simulation={simulation({ result: {} as never })} />);
     expect(screen.getByText(/version not recorded/)).toBeInTheDocument();

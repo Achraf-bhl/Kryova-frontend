@@ -456,6 +456,8 @@ export interface SimulationRead {
   geometry_version_id: string;
   status: JobStatus;
   solver: string;
+  /** What computed the answer ("0.2.0+21f4666"); null only before the run solved. */
+  solver_version?: string | null;
   load_case: Record<string, unknown> | null;
   element_size_mm: number | null;
   mesh_stats: Record<string, unknown> | null;
