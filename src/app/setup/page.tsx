@@ -5,7 +5,20 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { CopyDiagnostics } from "@/components/setup/copy-diagnostics";
-import { detectPlatform, runHealthChecks, type HealthCheckResult, type Platform } from "@/lib/system";
+import { tauriGlobal } from "@/lib/desktop-bridge";
+import {
+  POLL_MS,
+  isStartingQuery,
+  navigation,
+  startingMessage,
+} from "@/lib/startup-watch";
+import {
+  PREREQUISITES,
+  detectPlatform,
+  runHealthChecks,
+  type HealthCheckResult,
+  type Platform,
+} from "@/lib/system";
 
 const PLATFORM_LABELS: Record<Platform, string> = {
   macos: "macOS",
@@ -18,6 +31,11 @@ export default function SetupPage() {
   const [platform, setPlatform] = useState<Platform>("unknown");
   const [checks, setChecks] = useState<HealthCheckResult[] | null>(null);
   const [running, setRunning] = useState(true);
+  // Opened by the desktop shell while the backend is still starting (`startup-watch.ts`).
+  const [starting, setStarting] = useState(false);
+  // Decided after mount: the server render has no `window.__TAURI__`.
+  const [onDesktop, setOnDesktop] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
 
   const runChecks = useCallback(() => {
     setRunning(true);
@@ -31,14 +49,63 @@ export default function SetupPage() {
   useEffect(() => {
     const timer = setTimeout(() => {
       setPlatform(detectPlatform());
+      setOnDesktop(tauriGlobal() !== null);
+      if (isStartingQuery(window.location.search)) {
+        setStarting(true);
+        return;
+      }
       runChecks();
     }, 50);
     return () => clearTimeout(timer);
   }, [runChecks]);
 
+  // While starting: ask the API until it answers, then hand over to the app. A full
+  // navigation rather than a client one -- the server components render against the API,
+  // and the render that matters is the first one after it is up.
+  useEffect(() => {
+    if (!starting) return;
+    const began = Date.now();
+    const api = PREREQUISITES.find((item) => item.id === "api");
+    let stopped = false;
+    const tick = async () => {
+      setElapsedMs(Date.now() - began);
+      if (!api) return;
+      const up = await api.check().catch(() => false);
+      if (up && !stopped) {
+        stopped = true;
+        navigation.replace("/");
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [starting]);
+
+  const startingText = startingMessage(elapsedMs);
+
   const allOk = checks !== null && checks.every((c) => c.ok);
   const apiResult = checks?.find((c) => c.prerequisite.id === "api");
   const webglResult = checks?.find((c) => c.prerequisite.id === "browser");
+
+  if (starting) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-4 py-12">
+        <div role="status" className="w-full max-w-lg rounded-lg bg-surface p-8 text-center shadow-card">
+          <span className="mx-auto block size-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <h1 className="mt-4 text-xl font-semibold">{startingText.headline}</h1>
+          <p className="mt-2 text-sm text-muted">{startingText.detail}</p>
+          {startingText.showDiagnostics && (
+            <div className="mt-6 border-t border-border pt-4 text-left">
+              <CopyDiagnostics checks={[]} platform={platform} />
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-12">
@@ -117,9 +184,18 @@ export default function SetupPage() {
                 )}
                 {!allOk && !apiResult?.ok && (
                   <div className="rounded-md bg-amber-50 p-4 text-sm text-amber-700">
-                    The API server is not reachable. Start it with{" "}
-                    <code className="rounded bg-white/50 px-1 py-0.5 font-mono text-xs">uvicorn app.main:app --reload</code>{" "}
-                    then retry.
+                    {onDesktop ? (
+                      <>
+                        Kryova&apos;s backend did not start. Use <strong>Copy diagnostics</strong> below
+                        and send the report to support, then retry.
+                      </>
+                    ) : (
+                      <>
+                        The API server is not reachable. Start it with{" "}
+                        <code className="rounded bg-white/50 px-1 py-0.5 font-mono text-xs">uvicorn app.main:app --reload</code>{" "}
+                        then retry.
+                      </>
+                    )}
                   </div>
                 )}
                 <Button variant="secondary" onClick={runChecks} className="w-full">

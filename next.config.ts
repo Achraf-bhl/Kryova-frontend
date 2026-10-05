@@ -1,4 +1,6 @@
 import { execSync } from "node:child_process";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 
 /**
@@ -30,7 +32,29 @@ const securityHeaders = [
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
 ];
 
+/**
+ * The installer ships the app as Next's standalone server (ROAD_TO_10 4.1).
+ *
+ * **Opt-in, and only the desktop build opts in.** `output: "standalone"` changes what
+ * `next build` writes and makes `next start` print a warning, and the web deployment and
+ * every developer's `npm run build && npm start` are the ones that must not notice. The
+ * staging script (`scripts/stage-desktop.mjs`) sets this variable for its own build and
+ * nothing else does.
+ *
+ * `outputFileTracingRoot` pins the trace to this checkout. Left to guess, Next walks up to
+ * the nearest lockfile, and a sibling checkout or a lockfile in a home directory moves the
+ * root -- the standalone output then nests the app under a directory named after the
+ * checkout and `server.js` is not where the shell looks for it.
+ */
+const standalone = process.env.KRYOVA_STANDALONE === "1";
+
 const nextConfig: NextConfig = {
+  ...(standalone
+    ? {
+        output: "standalone" as const,
+        outputFileTracingRoot: dirname(fileURLToPath(import.meta.url)),
+      }
+    : {}),
   reactStrictMode: true,
   compress: true,
   poweredByHeader: false,

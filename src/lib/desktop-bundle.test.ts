@@ -151,3 +151,98 @@ describe("the shell's own server is not open to the network (ROAD_TO_10 4.8)", (
     expect(() => text("src/app/api/diagnostics/route.ts")).not.toThrow();
   });
 });
+
+describe("the shell's native powers (ROAD_TO_10 4.7)", () => {
+  const conf = JSON.parse(text("src-tauri/tauri.conf.json")) as {
+    app: { withGlobalTauri?: boolean };
+    plugins?: Record<string, { desktop?: { schemes?: string[] } }>;
+  };
+  const capability = JSON.parse(text("src-tauri/capabilities/default.json")) as {
+    windows: string[];
+    permissions: string[];
+    remote?: { urls: string[] };
+  };
+  const lib = code("src-tauri/src/lib.rs");
+  const cargo = text("src-tauri/Cargo.toml");
+
+  it("registers the kryova scheme and no other", () => {
+    expect(conf.plugins?.["deep-link"]?.desktop?.schemes).toEqual(["kryova"]);
+  });
+
+  it("puts the Tauri API on the page, because there is no @tauri-apps package to import", () => {
+    // Three runtime dependencies by doctrine; `scripts/check-dependencies.mjs` fails CI on a fourth.
+    expect(conf.app.withGlobalTauri).toBe(true);
+    const manifest = JSON.parse(text("package.json")) as { dependencies: Record<string, string> };
+    expect(Object.keys(manifest.dependencies).sort()).toEqual(["next", "react", "react-dom"]);
+  });
+
+  it("grants exactly these permissions, so widening one is a decision and not a drift", () => {
+    expect([...capability.permissions].sort()).toEqual([
+      "core:default",
+      "deep-link:default",
+      "dialog:allow-open",
+      "fs:allow-read-file",
+      "notification:default",
+      "shell:allow-open",
+      "updater:default",
+    ]);
+  });
+
+  it("grants nothing that writes a file, runs a command or reads a path nobody picked", () => {
+    const joined = capability.permissions.join(" ");
+    expect(joined).not.toMatch(/write|remove|rename|copy|mkdir|execute|spawn|kill|scope|\*/);
+    expect(joined).not.toContain("fs:default");
+  });
+
+  it("gives the page IPC by its own loopback origin and by no other", () => {
+    // Tauri grants IPC to a window's content by origin. The shell serves the app itself on
+    // loopback; a wildcard here would hand every site a window might navigate to the same powers.
+    expect(capability.windows).toEqual(["main"]);
+    expect(capability.remote?.urls).toEqual(["http://127.0.0.1:3000/*"]);
+  });
+
+  it("has a crate dependency for each plugin it registers, and registers each one it depends on", () => {
+    const registered = [...lib.matchAll(/tauri_plugin_([a-z_]+)::/g)].map((m) => m[1]);
+    const declared = [...cargo.matchAll(/^tauri-plugin-([a-z-]+)\s*=/gm)].map((m) => m[1].replace(/-/g, "_"));
+
+    expect([...new Set(registered)].sort()).toEqual([...new Set(declared)].sort());
+    for (const plugin of ["dialog", "fs", "notification", "deep_link", "single_instance", "updater", "shell"]) {
+      expect(registered, plugin).toContain(plugin);
+    }
+  });
+
+  it("registers single-instance first, as the plugin requires", () => {
+    const first = lib.indexOf(".plugin(");
+    expect(lib.slice(first, first + 60)).toContain("tauri_plugin_single_instance");
+  });
+
+  it("answers every command the page calls, and calls only commands that exist", () => {
+    const handler = /generate_handler!\[([^\]]*)\]/.exec(lib)?.[1] ?? "";
+    const registered = handler.split(",").map((name) => name.trim()).filter(Boolean).sort();
+    const called = [...code("src/lib/desktop-bridge.ts").matchAll(/invoke\(\s*[a-z]+,\s*"([a-z_]+)"/g)]
+      .map((m) => m[1]);
+
+    expect(called.length).toBeGreaterThan(0);
+    for (const command of called) expect(registered, command).toContain(command);
+    // And nothing registered goes unused: a command nobody calls is surface for nothing.
+    for (const command of registered.filter((name) => name !== "backend_url")) {
+      expect(called, command).toContain(command);
+    }
+  });
+
+  it("emits, and listens for, the same event", () => {
+    const rust = /const DEEP_LINK_EVENT: &str = "([^"]+)";/.exec(lib)?.[1];
+    const page = /export const DEEP_LINK_EVENT = "([^"]+)";/.exec(text("src/lib/desktop-bridge.ts"))?.[1];
+
+    expect(rust).toBeDefined();
+    expect(rust).toBe(page);
+  });
+
+  it("registers no file associations, and says why", () => {
+    // Opening a `.stp` from Explorer would have to start a conversation with it attached, and a
+    // conversation cannot yet use an attachment at all (CLAUDE.md, *Reading what users attach*
+    // 13; master plan P4.7). Registering the extensions first would take over the user's CAD
+    // associations to open an app that cannot do what the double-click promised.
+    expect(text("src-tauri/tauri.conf.json")).not.toContain("fileAssociations");
+  });
+});

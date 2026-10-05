@@ -1,7 +1,22 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Least-privilege set: enough to open the window and let the frontend talk to the local backend.",
-  "windows": ["main"],
-  "permissions": ["core:default", "shell:allow-open"]
+  "description": "Least-privilege set: open the window, talk to the local backend, and the five native powers the product uses (ROAD_TO_10 4.7) -- each at the narrowest permission that does its job, with no write access to the file system and no command execution. `remote` is the page itself: the shell loads the app from its own loopback server, and Tauri grants IPC to a window's content only by origin.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "dialog:allow-open",
+    "fs:allow-read-file",
+    "notification:default",
+    "deep-link:default",
+    "updater:default"
+  ],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:3000/*"
+    ]
+  }
 }

@@ -10,6 +10,7 @@
     "frontendDist": "http://127.0.0.1:3000"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Kryova",
@@ -25,6 +26,15 @@
     ],
     "security": {
       "csp": "default-src 'self'; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:3000 http://127.0.0.1:8000"
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "kryova"
+        ]
+      }
     }
   },
   "bundle": {

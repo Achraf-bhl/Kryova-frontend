@@ -1,0 +1,25 @@
+{
+  "_comment": "The three runtimes an installed Kryova carries beside its executable, each pinned by version, URL and SHA-256 (ROAD_TO_10 4.1-4.3). `scripts/stage-desktop.mjs` refuses a download whose hash differs. Every hash is read off a document or measured, never recalled; `hash_source` says which. Bump a version by changing the three fields together and re-reading the source.",
+  "node": {
+    "version": "24.15.0",
+    "url": "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip",
+    "sha256": "cc5149eabd53779ce1e7bdc5401643622d0c7e6800ade18928a767e940bb0e62",
+    "hash_source": "read from https://nodejs.org/dist/v24.15.0/SHASUMS256.txt on 2026-10-05",
+    "inside_archive": "node-v24.15.0-win-x64/node.exe"
+  },
+  "python": {
+    "version": "3.14.8",
+    "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20261003/cpython-3.14.8%2B20261003-x86_64-pc-windows-msvc-install_only_stripped.tar.gz",
+    "sha256": "10e5705e44938ee78de35c62b30fdfe2945b53438343d04c0f53548cdd8e91b6",
+    "hash_source": "the release asset's own digest as served by the GitHub API on 2026-10-05, and re-measured by downloading it the same day",
+    "inside_archive": "python/"
+  },
+  "postgres": {
+    "version": "18.6",
+    "url": "https://get.enterprisedb.com/postgresql/postgresql-18.6-1-windows-x64-binaries.zip",
+    "sha256": "fbe23da234ee31547bf8a36d29dfd81e82b849df2d2b78d2eecb43d360252f8c",
+    "hash_source": "MEASURED by Kryova on 2026-10-05 from the downloaded file (343,808,005 bytes). EDB publishes no checksum beside the download (the .sha256 and .md5 paths answer 403), so this pins what was seen and cannot say it was what EDB intended; it does stop a later substitution",
+    "inside_archive": "pgsql/",
+    "keep": ["bin", "lib", "share"]
+  }
+}

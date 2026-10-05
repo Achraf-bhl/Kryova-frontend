@@ -132,7 +132,10 @@ export async function collectServerDiagnostics(
   const unavailable: { name: string; reason: string }[] = [];
   for (const name of LOG_FILES) {
     try {
-      const read = await readTail(path.join(dir, name));
+      // `turbopackIgnore`: `dir` is a runtime path (the log folder the shell names), and without
+      // this the build reads the join as "any file in the project" and the standalone output
+      // takes the whole checkout -- source, scripts, `src-tauri/target` and all, 5 GB of it.
+      const read = await readTail(path.join(/*turbopackIgnore: true*/ dir, name));
       logs.push({
         name,
         bytes: read.bytes,

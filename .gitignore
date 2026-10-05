@@ -42,4 +42,8 @@ next-env.d.ts
 
 # Tauri build output (Rust target dir is large and machine-specific)
 src-tauri/target/
+# What `scripts/stage-desktop.mjs` assembles for the installer: a pinned Node, CPython with
+# every wheel, PostgreSQL and the built frontend -- over a gigabyte that is rebuilt on demand
+# and must never be committed.
+src-tauri/bundle/
 src-tauri/gen/
