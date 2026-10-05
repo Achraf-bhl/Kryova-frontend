@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 
+import { useT } from "@/lib/i18n/locale-context";
 import { SHORTCUTS, renderKey } from "@/lib/shortcuts";
 
 /**
@@ -10,6 +11,7 @@ import { SHORTCUTS, renderKey } from "@/lib/shortcuts";
  * turn: the close handler marks the event handled.
  */
 export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const ref = useRef<HTMLDialogElement>(null);
   const isMac = typeof navigator !== "undefined" && /mac/i.test(navigator.platform);
 
@@ -32,12 +34,12 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
       className="m-auto w-[min(28rem,calc(100vw-2rem))] rounded-lg border border-border bg-surface p-5 text-accent shadow-xl backdrop:bg-black/40"
     >
       <h2 id="shortcut-sheet-title" className="text-base font-semibold">
-        Keyboard shortcuts
+        {t("shortcuts.title")}
       </h2>
       <dl className="mt-3 space-y-2">
         {SHORTCUTS.map((shortcut) => (
           <div key={shortcut.id} className="flex items-baseline justify-between gap-4 text-sm">
-            <dt className="text-muted">{shortcut.description}</dt>
+            <dt className="text-muted">{t(shortcut.label)}</dt>
             <dd className="flex shrink-0 flex-col items-end gap-1">
               {shortcut.chords.map((chord) => (
                 <span key={chord.join("+")} className="flex gap-1">
@@ -57,7 +59,7 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
       </dl>
       <div className="mt-4 text-right">
         <button type="button" onClick={onClose} className="k-pill">
-          Close
+          {t("shortcuts.close")}
         </button>
       </div>
     </dialog>

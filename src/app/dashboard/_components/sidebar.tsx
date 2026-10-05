@@ -1,5 +1,6 @@
 "use client";
 
+import { LocaleSwitch } from "@/components/shell/locale-switch";
 import { ThemeToggle } from "@/components/shell/theme-toggle";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -24,6 +25,8 @@ import {
   TeamIcon,
 } from "@/components/ui/icons";
 import { useAuth } from "@/lib/auth-context";
+import type { MessageKey } from "@/lib/i18n/catalogue";
+import { useT } from "@/lib/i18n/locale-context";
 import { api } from "@/lib/api-client";
 import { groupConversations } from "@/lib/conversation-groups";
 import { onConversationsChanged } from "@/lib/conversation-events";
@@ -35,13 +38,13 @@ const SEARCH_MIN_CHARS = 2;
 const SEARCH_DEBOUNCE_MS = 250;
 
 const NAV = [
-  { href: "/dashboard/projects", label: "Projects", Icon: PartIcon },
-  { href: "/dashboard/runs", label: "Runs", Icon: RunsIcon },
-  { href: "/dashboard/files", label: "Files", Icon: FilesIcon },
-  { href: "/dashboard/history", label: "History", Icon: HistoryIcon },
-  { href: "/dashboard/approvals", label: "Approvals", Icon: CheckIcon },
-  { href: "/dashboard/organisations", label: "Teams", Icon: TeamIcon },
-] as const;
+  { href: "/dashboard/projects", label: "nav.projects", Icon: PartIcon },
+  { href: "/dashboard/runs", label: "nav.runs", Icon: RunsIcon },
+  { href: "/dashboard/files", label: "nav.files", Icon: FilesIcon },
+  { href: "/dashboard/history", label: "nav.history", Icon: HistoryIcon },
+  { href: "/dashboard/approvals", label: "nav.approvals", Icon: CheckIcon },
+  { href: "/dashboard/organisations", label: "nav.teams", Icon: TeamIcon },
+] as const satisfies readonly { href: string; label: MessageKey; Icon: unknown }[];
 
 function initialsOf(fullName: string | null, email: string): string {
   const source = fullName?.trim() || email.split("@")[0];
@@ -58,6 +61,7 @@ export interface SidebarProps {
 
 export function Sidebar({ user, initialConversations }: SidebarProps) {
   const pathname = usePathname();
+  const t = useT();
   const { logout } = useAuth();
   const [conversations, setConversations] = useState(initialConversations);
   const [query, setQuery] = useState("");
@@ -192,7 +196,7 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
         <Link
           href="/dashboard"
           className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1"
-          aria-label="Kryova home"
+          aria-label={t("nav.home")}
         >
           <span className="k-orb size-5 shrink-0" aria-hidden="true" />
           {!collapsed && (
@@ -218,7 +222,7 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
           type="button"
           onClick={() => setDrawerOpen(false)}
           className="ml-auto rounded-sm p-1.5 text-faint hover:text-accent md:hidden"
-          aria-label="Close menu"
+          aria-label={t("nav.closeMenu")}
         >
           <CloseIcon className="size-4" />
         </button>
@@ -229,7 +233,7 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
         className="flex h-9 items-center justify-center gap-2 rounded-md bg-primary text-sm font-medium text-white transition-colors hover:bg-primary-hover"
       >
         <PlusIcon className="size-4" />
-        {!collapsed && "New chat"}
+        {!collapsed && t("chat.new")}
       </Link>
 
       {!collapsed && (
@@ -240,8 +244,8 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
             type="search"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search chats"
-            aria-label="Search conversations"
+            placeholder={t("chat.search")}
+            aria-label={t("chat.searchLabel")}
             className="h-8 w-full rounded-md border border-border bg-surface pl-8 pr-10 text-sm text-accent outline-none placeholder:text-faint focus:border-primary"
           />
           <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 font-mono text-[0.625rem] text-faint">
@@ -250,17 +254,17 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
         </div>
       )}
 
-      <nav className="flex flex-col gap-0.5" aria-label="Sections">
+      <nav className="flex flex-col gap-0.5" aria-label={t("nav.sections")}>
         {NAV.map(({ href, label, Icon }) => (
           <Link
             key={href}
             href={href}
             className="k-nav-item"
             aria-current={pathname === href || pathname.startsWith(`${href}/`) ? "page" : undefined}
-            title={collapsed ? label : undefined}
+            title={collapsed ? t(label) : undefined}
           >
             <Icon className="size-4 shrink-0" />
-            {!collapsed && label}
+            {!collapsed && t(label)}
           </Link>
         ))}
       </nav>
@@ -318,13 +322,14 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
               </span>
             </span>
           )}
+          <LocaleSwitch />
           <ThemeToggle />
           <button
             type="button"
             onClick={() => void logout()}
             className="rounded-sm p-1.5 text-faint hover:text-danger"
-            aria-label="Sign out"
-            title="Sign out"
+            aria-label={t("auth.signOut")}
+            title={t("auth.signOut")}
           >
             <SignOutIcon className="size-4" />
           </button>
@@ -336,7 +341,7 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
             aria-current={pathname === "/dashboard/settings" ? "page" : undefined}
           >
             <SettingsIcon className="size-3.5" />
-            Settings
+            {t("nav.settings")}
           </Link>
         )}
         {!collapsed && (
@@ -350,7 +355,7 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
             aria-current={pathname === "/dashboard/admin" ? "page" : undefined}
           >
             <SettingsIcon className="size-3.5" />
-            Operations
+            {t("nav.operations")}
           </Link>
         )}
       </div>
@@ -366,7 +371,7 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
           type="button"
           onClick={() => setDrawerOpen(true)}
           className="rounded-sm p-2 text-muted hover:text-accent"
-          aria-label="Open menu"
+          aria-label={t("nav.openMenu")}
           aria-expanded={drawerOpen}
         >
           <MenuIcon className="size-5" />
@@ -390,7 +395,7 @@ export function Sidebar({ user, initialConversations }: SidebarProps) {
           <button
             type="button"
             className="absolute inset-0 bg-accent/30"
-            aria-label="Close menu"
+            aria-label={t("nav.closeMenu")}
             onClick={() => setDrawerOpen(false)}
           />
           {/* Any link inside the drawer navigates, and a drawer left open then

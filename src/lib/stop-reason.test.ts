@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { translate } from "./i18n/catalogue";
 import { APPROVALS_HREF, explainStop } from "./stop-reason";
 
 const bare = { hasIntervention: false, hasNextAction: false };
@@ -41,5 +42,18 @@ describe("explainStop", () => {
     expect(explainStop("step_budget", { ...bare, hasNextAction: true }).text).toContain("press Continue");
     expect(explainStop("step_budget", bare).text).not.toContain("Continue");
     expect(explainStop(undefined, bare).text).toContain("Ask for one thing at a time");
+  });
+});
+
+describe("explainStop in French", () => {
+  const fr = (key: Parameters<typeof translate>[1]) => translate("fr", key);
+
+  it("says the same thing in the user's language, with the same tone and link", () => {
+    const english = explainStop("awaiting_approval", bare);
+    const french = explainStop("awaiting_approval", bare, fr);
+    expect(french.text).not.toBe(english.text);
+    expect(french.tone).toBe(english.tone);
+    expect(french.link?.href).toBe(english.link?.href);
+    expect(french.link?.label).toBe("Ouvrir Approbations");
   });
 });

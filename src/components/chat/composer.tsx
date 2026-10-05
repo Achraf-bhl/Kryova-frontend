@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Pill } from "@/components/ui/pill";
+import { useT } from "@/lib/i18n/locale-context";
 import { BoltIcon, SendIcon, StopIcon } from "@/components/ui/icons";
 
 const MAX_HEIGHT_PX = 216;
@@ -56,10 +57,11 @@ export function Composer({
   onDeepAnalysisChange,
   attachSlot,
   statusSlot,
-  placeholder = "Describe a part, or ask about a run…",
+  placeholder,
   autoFocus = false,
   onFilesDropped,
 }: ComposerProps) {
+  const t = useT();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [dropping, setDropping] = useState(false);
 
@@ -128,7 +130,7 @@ export function Composer({
       }
     >
       <label htmlFor="composer" className="sr-only">
-        Message the Kryova agent
+        {t("composer.label")}
       </label>
       <textarea
         id="composer"
@@ -146,7 +148,7 @@ export function Composer({
             if (value.trim() && !busy) onSubmit();
           }
         }}
-        placeholder={placeholder}
+        placeholder={placeholder ?? t("composer.placeholder")}
         // `max-h-54` is 54 x 0.25rem = 13.5rem = 216px, which must stay equal to
         // MAX_HEIGHT_PX above: the JS caps the inline height it sets while
         // growing, and this caps the box if JS has not run yet (first paint,
@@ -159,10 +161,10 @@ export function Composer({
         <Pill
           active={deepAnalysis}
           onClick={() => onDeepAnalysisChange(!deepAnalysis)}
-          title="Let the agent run tools that change things: create projects, drive CATIA, start solves."
+          title={t("composer.deepAnalysisHint")}
         >
           <BoltIcon className="size-3.5" />
-          Deep analysis
+          {t("composer.deepAnalysis")}
         </Pill>
 
         {attachSlot}
@@ -174,16 +176,8 @@ export function Composer({
               type="button"
               onClick={onStop}
               className="k-pill"
-              aria-label={
-                stopping
-                  ? "Stopping after the current step — press again to cut the stream"
-                  : "Stop the current run"
-              }
-              title={
-                stopping
-                  ? "Finishing the step already in flight, then stopping. Press again to cut the stream instead — that ends the connection, not the work."
-                  : "Stop after the current step. Everything already done is kept."
-              }
+              aria-label={stopping ? t("composer.stoppingLabel") : t("composer.stopLabel")}
+              title={stopping ? t("composer.stoppingHint") : t("composer.stopHint")}
             >
               <StopIcon className="size-3" />
               {/* Named rather than left as "Stop", because the gap between the
@@ -191,15 +185,15 @@ export function Composer({
                   call in flight first. A button that said nothing during that
                   gap reads as "nothing happened" and gets pressed again, which
                   is the hard abort. */}
-              {stopping ? "Stopping…" : "Stop"}
+              {stopping ? t("composer.stopping") : t("composer.stop")}
             </button>
           )}
           <button
             type="button"
             onClick={onSubmit}
             disabled={!canSend}
-            aria-label={busy ? "Waiting for the current run to finish" : "Send message"}
-            title={busy ? "The agent is still working on the last message." : "Send (Enter)"}
+            aria-label={busy ? t("composer.sendBusy") : t("composer.send")}
+            title={busy ? t("composer.sendBusyHint") : t("composer.sendHint")}
             className="flex size-9 items-center justify-center rounded-full bg-primary text-white transition-colors hover:bg-primary-hover disabled:bg-border-strong disabled:text-faint"
           >
             <SendIcon className="size-4" />

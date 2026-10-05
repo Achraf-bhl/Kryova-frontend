@@ -9,6 +9,8 @@
  * ending whose remedy is a place rather than a button — the approvals queue.
  */
 
+import { translate, type MessageKey } from "@/lib/i18n/catalogue";
+
 export type StopReason =
   | "finished"
   | "step_budget"
@@ -42,52 +44,48 @@ export interface StopContext {
 
 export const APPROVALS_HREF = "/dashboard/approvals";
 
-export function explainStop(reason: string | undefined, context: StopContext): StopExplanation {
+type Say = (key: MessageKey) => string;
+const english: Say = (key) => translate("en", key);
+
+/**
+ * `say` is the interface's translator (`useT()`); the default is English so the function is
+ * usable, and testable, with no provider. The *choice* of sentence is not language-dependent
+ * and is what the tests pin.
+ */
+export function explainStop(
+  reason: string | undefined,
+  context: StopContext,
+  say: Say = english,
+): StopExplanation {
   switch (reason) {
     case "cancelled":
-      return {
-        tone: "muted",
-        text: "You stopped this turn. Everything above really ran — say what to do next and it carries on from there.",
-      };
+      return { tone: "muted", text: say("stop.cancelled") };
     case "repeated_calls":
-      return {
-        tone: "warning",
-        text: "The agent stopped because it kept repeating a call that had already been refused. Tell it what to do differently — it keeps everything it built.",
-      };
+      return { tone: "warning", text: say("stop.repeated_calls") };
     case "needs_input":
       return {
         tone: "warning",
         // With a prompt below, "the end of its answer" would point past the thing to answer.
-        text: context.hasIntervention
-          ? "The agent stopped to ask you something rather than keep retrying. Answer below and it carries on from what is built."
-          : "The agent stopped to ask you something rather than keep retrying — the question is at the end of its answer. Answer it and it carries on from what is built.",
+        text: say(context.hasIntervention ? "stop.needs_input.prompt" : "stop.needs_input.prose"),
       };
     case "awaiting_approval":
       return {
         tone: "muted",
-        text: context.hasIntervention
-          ? "The agent reached a checkpoint that needs sign-off. Nothing past it has run — decide below, or open it under Approvals."
-          : "The agent reached a checkpoint that needs sign-off. Nothing past it has run; approve or reject it under Approvals and it carries on from there.",
-        link: { href: APPROVALS_HREF, label: "Open Approvals" },
+        text: say(
+          context.hasIntervention ? "stop.awaiting_approval.prompt" : "stop.awaiting_approval.prose",
+        ),
+        link: { href: APPROVALS_HREF, label: say("stop.awaiting_approval.link") },
       };
     case "task_boundary":
-      return {
-        tone: "muted",
-        text: "The agent stopped at the end of a task because the rest of the plan would not fit in this turn's tool rounds. Everything above ran — press Continue to start the next task.",
-      };
+      return { tone: "muted", text: say("stop.task_boundary") };
     case "provider_busy":
-      return {
-        tone: "muted",
-        text: "The model provider stayed too busy to answer after several tries. Nothing was lost — press Continue to try again.",
-      };
+      return { tone: "muted", text: say("stop.provider_busy") };
     default:
       // `step_budget`, or a backend that predates the field. "Continue" is promised only when
       // the server sent the button; otherwise the older advice is the true one.
       return {
         tone: "warning",
-        text: context.hasNextAction
-          ? "The agent used all of its tool rounds for that turn. Everything above ran — press Continue to carry on from what is built."
-          : "The agent ran out of tool rounds for that turn. Ask for one thing at a time and it will get further.",
+        text: say(context.hasNextAction ? "stop.step_budget.continue" : "stop.step_budget.plain"),
       };
   }
 }

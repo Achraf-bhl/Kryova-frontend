@@ -9,6 +9,7 @@ import { AttachPill } from "@/components/chat/attach-pill";
 import { CatiaChip } from "@/components/chat/catia-chip";
 import { CheckpointsMenu } from "@/components/chat/checkpoints-menu";
 import { Composer } from "@/components/chat/composer";
+import { useT } from "@/lib/i18n/locale-context";
 import { matchShortcut } from "@/lib/shortcuts";
 import { explainStop } from "@/lib/stop-reason";
 import { UsageMeter } from "@/components/chat/usage-meter";
@@ -188,6 +189,8 @@ export function ChatView({
     onProjectCreated: setProject,
     onTurnFinished: notifyConversationsChanged,
   });
+
+  const t = useT();
 
   // Esc stops a running turn (8.7) — the same polite stop as the button, so the first
   // press ends it at the next step and a second cuts the stream. An open dialog marks its
@@ -475,10 +478,14 @@ export function ChatView({
                       // Wording, tone and the one page-shaped remedy live in
                       // `lib/stop-reason.ts`, one test per ending. The buttons
                       // below (decision, Continue) come from the server.
-                      const stop = explainStop(turn.stopReason, {
-                        hasIntervention: Boolean(turn.intervention),
-                        hasNextAction: Boolean(turn.nextAction),
-                      });
+                      const stop = explainStop(
+                        turn.stopReason,
+                        {
+                          hasIntervention: Boolean(turn.intervention),
+                          hasNextAction: Boolean(turn.nextAction),
+                        },
+                        t,
+                      );
                       return (
                         <p className={stop.tone === "warning" ? "text-xs text-warning" : "text-xs text-muted"}>
                           {stop.text}

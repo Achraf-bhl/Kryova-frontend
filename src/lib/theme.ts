@@ -10,6 +10,8 @@
  * No GL here: the viewer reads `viewerBackground` and draws itself.
  */
 
+import type { MessageKey } from "@/lib/i18n/catalogue";
+
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
@@ -30,11 +32,12 @@ export function nextPreference(preference: ThemePreference): ThemePreference {
   return preference === "system" ? "light" : preference === "light" ? "dark" : "system";
 }
 
-export const PREFERENCE_LABEL: Record<ThemePreference, string> = {
-  system: "Theme: follows your system",
-  light: "Theme: light",
-  dark: "Theme: dark",
-};
+/** Catalogue keys for the toggle's three states. */
+export const PREFERENCE_KEY = {
+  system: "theme.system",
+  light: "theme.light",
+  dark: "theme.dark",
+} as const satisfies Record<ThemePreference, MessageKey>;
 
 /** RGB 0..1 for `gl.clearColor` — the same paper and ink as the page tokens. */
 export function viewerBackground(theme: ResolvedTheme): [number, number, number] {

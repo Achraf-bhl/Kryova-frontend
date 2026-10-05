@@ -12,21 +12,24 @@
  * that fails in a tab would be a shortcut that silently does nothing.
  */
 
+import type { MessageKey } from "@/lib/i18n/catalogue";
+
 export type ShortcutId = "stop" | "send" | "new" | "help" | "search";
 
 export interface Shortcut {
   id: ShortcutId;
   /** Key labels as shown on the sheet, one array per accepted chord. */
   chords: string[][];
-  description: string;
+  /** The catalogue key for what it does, so the sheet can speak the user's language. */
+  label: MessageKey;
 }
 
 export const SHORTCUTS: readonly Shortcut[] = [
-  { id: "stop", chords: [["Esc"]], description: "Stop the running turn after its current step" },
-  { id: "send", chords: [["Mod", "Enter"]], description: "Send the message" },
-  { id: "new", chords: [["Mod", "N"], ["Alt", "N"]], description: "Start a new conversation" },
-  { id: "search", chords: [["Mod", "K"]], description: "Search conversations" },
-  { id: "help", chords: [["Mod", "/"]], description: "Show this list of shortcuts" },
+  { id: "stop", chords: [["Esc"]], label: "shortcuts.stop" },
+  { id: "send", chords: [["Mod", "Enter"]], label: "shortcuts.send" },
+  { id: "new", chords: [["Mod", "N"], ["Alt", "N"]], label: "shortcuts.new" },
+  { id: "search", chords: [["Mod", "K"]], label: "shortcuts.search" },
+  { id: "help", chords: [["Mod", "/"]], label: "shortcuts.help" },
 ];
 
 export interface KeyLike {
