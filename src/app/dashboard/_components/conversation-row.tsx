@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { BranchIcon, CheckIcon, CloseIcon, PinIcon, TrashIcon } from "@/components/ui/icons";
 import { api } from "@/lib/api-client";
@@ -44,6 +44,20 @@ export function ConversationRow({
   const [pinning, setPinning] = useState(false);
 
   const id = conversation.conversation_id;
+
+  // The row's own buttons are replaced when the delete confirmation opens, and a focused
+  // element that unmounts drops focus to <body> — which also ends `focus-within`, hiding
+  // the very buttons the keyboard user was about to press. So focus is moved on purpose:
+  // to the confirm button when it opens, back to the delete button when it is dismissed
+  // (ROAD_TO_10 8.11).
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const deleteRef = useRef<HTMLButtonElement>(null);
+  const wasConfirming = useRef(false);
+  useEffect(() => {
+    if (confirmingDelete) confirmRef.current?.focus();
+    else if (wasConfirming.current) deleteRef.current?.focus();
+    wasConfirming.current = confirmingDelete;
+  }, [confirmingDelete]);
 
   async function commitRename(): Promise<void> {
     const title = draft.trim();
@@ -117,6 +131,15 @@ export function ConversationRow({
         href={`/dashboard/c/${id}`}
         className="k-nav-item pr-[4.5rem]"
         aria-current={active ? "page" : undefined}
+        // F2 renames, as in a file manager: double-click was the only way in, and a
+        // double-click has no keyboard equivalent.
+        aria-keyshortcuts="F2"
+        onKeyDown={(event) => {
+          if (event.key === "F2") {
+            event.preventDefault();
+            setRenaming(true);
+          }
+        }}
         onDoubleClick={(event) => {
           event.preventDefault();
           setRenaming(true);
@@ -142,10 +165,18 @@ export function ConversationRow({
         <span className="block px-2 pb-1 text-[0.6875rem] text-faint">found in a message</span>
       )}
 
-      <span className="absolute right-1 top-1/2 hidden -translate-y-1/2 items-center gap-0.5 group-hover:flex group-focus-within:flex">
+      {/* Shown on hover, on keyboard focus anywhere in the row, and always on the open
+          conversation — a touch screen has no hover, so without that last rule pinning
+          and deleting were unreachable there. */}
+      <span
+        className={`absolute right-1 top-1/2 -translate-y-1/2 items-center gap-0.5 group-hover:flex group-focus-within:flex ${
+          active || confirmingDelete ? "flex" : "hidden"
+        }`}
+      >
         {confirmingDelete ? (
           <>
             <button
+              ref={confirmRef}
               type="button"
               onClick={() => void remove()}
               className="rounded-sm p-1 text-danger hover:bg-danger/10"
@@ -177,6 +208,7 @@ export function ConversationRow({
               <PinIcon className="size-3.5" />
             </button>
             <button
+              ref={deleteRef}
               type="button"
               onClick={() => setConfirmingDelete(true)}
               className="rounded-sm p-1 text-faint hover:text-danger"

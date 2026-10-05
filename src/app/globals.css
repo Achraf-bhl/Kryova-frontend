@@ -28,8 +28,8 @@
   /* Blue-shifted rather than neutral grey, so text sits in the same family
      as the accents instead of reading as a separate greyscale layer. */
   --color-accent: #0d1420;
-  --color-muted: #5a6b85;
-  --color-faint: #8598b4;
+  --color-muted: #4f6180;
+  --color-faint: #5d6f8f;
 
   /* -- blues ------------------------------------------------------------- */
   --color-blueprint: #1b3a8c; /* deep ink: wordmark, primary buttons */
@@ -49,9 +49,12 @@
   /* -- status ------------------------------------------------------------ */
   /* Amber is the single warm counterpoint in an otherwise cold palette, and
      it is the same amber as the loaded end of the ramp. */
-  --color-warning: #f0a03c;
-  --color-danger: #e2503f;
-  --color-success: #16a34a;
+  /* Text-safe values (>= 4.5:1 on white, ROAD_TO_10 8.11): the old #f0a03c amber was 2.1:1
+     and #16a34a green 3.3:1, and both are used as text. The brand amber lives on in
+     --color-ramp-4, which is data and not text. */
+  --color-warning: #a14a08;
+  --color-danger: #c2362a;
+  --color-success: #15803d;
   --color-live: #22c55e;
 
   /* -- type -------------------------------------------------------------- */
@@ -113,6 +116,9 @@
   --color-primary-hover: #5f8fff;
   --color-primary-soft: #172648;
   --color-cyan-tint: #7cc6f5;
+  --color-warning: #f0a03c;
+  --color-danger: #ef6a5a;
+  --color-success: #22c55e;
   --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.3);
   --shadow-raised: 0 4px 16px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.35);
   --shadow-composer: 0 2px 6px rgb(0 0 0 / 0.35), 0 12px 32px rgb(0 0 0 / 0.45);
@@ -138,6 +144,9 @@
     --color-primary-hover: #5f8fff;
     --color-primary-soft: #172648;
     --color-cyan-tint: #7cc6f5;
+    --color-warning: #f0a03c;
+    --color-danger: #ef6a5a;
+    --color-success: #22c55e;
     --shadow-card: 0 1px 2px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.3);
     --shadow-raised: 0 4px 16px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.35);
     --shadow-composer: 0 2px 6px rgb(0 0 0 / 0.35), 0 12px 32px rgb(0 0 0 / 0.45);

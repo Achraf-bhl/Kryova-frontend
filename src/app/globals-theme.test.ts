@@ -59,3 +59,51 @@ describe("the dark theme", () => {
     }
   });
 });
+
+/** WCAG 2.x relative luminance and contrast ratio. */
+function channel(value: number): number {
+  const c = value / 255;
+  return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+}
+function lum(hex: string): number {
+  const n = parseInt(hex.slice(1), 16);
+  return 0.2126 * channel((n >> 16) & 255) + 0.7152 * channel((n >> 8) & 255) + 0.0722 * channel(n & 255);
+}
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe("contrast (ROAD_TO_10 8.11)", () => {
+  const themes = {
+    light: declarations("@theme"),
+    dark: declarations(':root[data-theme="dark"]'),
+  };
+
+  for (const [name, tokens] of Object.entries(themes)) {
+    it(`keeps body text at 4.5:1 on the surfaces it sits on, in ${name}`, () => {
+      for (const ink of ["--color-accent", "--color-muted", "--color-faint"]) {
+        for (const ground of ["--color-surface", "--color-surface-sunken", "--color-canvas"]) {
+          expect(contrast(tokens[ink], tokens[ground]), `${ink} on ${ground}`).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    });
+
+    it(`keeps status colours legible as text on the surface, in ${name}`, () => {
+      for (const status of ["--color-warning", "--color-danger", "--color-success"]) {
+        expect(contrast(tokens[status], tokens["--color-surface"]), status).toBeGreaterThanOrEqual(4.4);
+      }
+    });
+
+    it(`keeps the primary colour at 3:1 (a UI component) in ${name}`, () => {
+      expect(contrast(tokens["--color-primary"], tokens["--color-surface"])).toBeGreaterThanOrEqual(3);
+    });
+  }
+
+  it("keeps white button text on the light theme's fills at 4.5:1", () => {
+    const light = themes.light;
+    for (const fill of ["--color-primary", "--color-danger"]) {
+      expect(contrast("#ffffff", light[fill]), fill).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
